@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Racer 代码提交</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface2: #f1f5f9;
+  --border: #e2e8f0;
+  --border-focus: #3b82f6;
+  --text: #1e293b;
+  --text-dim: #64748b;
+  --text-light: #94a3b8;
+  --accent: #3b82f6;
+  --accent-dark: #2563eb;
+  --accent-hover: #1d4ed8;
+  --success: #22c55e;
+  --success-bg: #f0fdf4;
+  --success-border: #86efac;
+  --danger: #ef4444;
+  --danger-bg: #fef2f2;
+  --danger-border: #fca5a5;
+  --warn: #f59e0b;
+  --warn-bg: #fffbeb;
+  --warn-border: #fde68a;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+  --font: system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+html, body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ── Login Screen ─────────────────────────────── */
+#login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f0f4ff 0%, #f8fafc 50%, #f0fdf4 100%);
+  padding: 20px;
+}
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 40px;
+  width: 100%;
+  max-width: 380px;
+}
+.login-logo {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.login-logo-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.5px;
+}
+.login-logo-sub {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+.login-logo-icon {
+  font-size: 40px;
+  display: block;
+  margin-bottom: 10px;
+}
+.form-group {
+  margin-bottom: 16px;
+}
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+input[type="text"],
+input[type="password"],
+input[type="number"],
+select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--surface);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+input:focus, select:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+}
+.btn-primary {
+  width: 100%;
+  padding: 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-dark); }
+.btn-primary:active:not(:disabled) { transform: translateY(1px); }
+.btn-primary:disabled { background: var(--text-light); cursor: not-allowed; }
+
+.login-error {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  display: none;
+}
+.login-error.visible { display: block; }
+
+/* ── Main Panel ───────────────────────────────── */
+#main-panel {
+  display: none;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+/* Header */
+.main-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  box-shadow: var(--shadow);
+}
+.header-brand {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.header-brand span {
+  color: var(--accent);
+}
+.header-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.team-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.team-badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+}
+.btn-logout {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: color 0.15s, border-color 0.15s;
+}
+.btn-logout:hover { color: var(--text); border-color: #94a3b8; }
+
+/* Locked banner */
+#locked-banner {
+  display: none;
+  background: var(--danger-bg);
+  border-bottom: 2px solid var(--danger);
+  padding: 12px 32px;
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 14px;
+  text-align: center;
+  letter-spacing: 0.3px;
+}
+#locked-banner.visible { display: block; }
+
+/* Content */
+.main-content {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.card-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.card-body {
+  padding: 20px;
+}
+
+/* Submit section */
+#dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 36px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  position: relative;
+  background: var(--surface2);
+}
+#dropzone:hover, #dropzone.drag-over {
+  border-color: var(--accent);
+  background: rgba(59,130,246,0.04);
+}
+#dropzone.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+#dropzone .dz-icon {
+  font-size: 32px;
+  display: block;
+  margin-bottom: 10px;
+  color: var(--text-dim);
+}
+#dropzone .dz-text {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+#dropzone .dz-sub {
+  font-size: 12px;
+  color: var(--text-light);
+}
+#dropzone .dz-filename {
+  display: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-top: 8px;
+  font-family: monospace;
+}
+#dropzone .dz-filename.visible { display: block; }
+#file-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+.submit-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+.btn-submit {
+  padding: 9px 24px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-submit:hover:not(:disabled) { background: var(--accent-dark); }
+.btn-submit:disabled { background: var(--text-light); cursor: not-allowed; }
+.btn-submit .spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.btn-submit.loading .spinner { display: inline-block; }
+.btn-submit.loading .btn-text { opacity: 0.7; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.file-hint { font-size: 12px; color: var(--text-light); }
+
+/* Result card */
+#result-card {
+  display: none;
+}
+#result-card.visible { display: block; }
+.result-success {
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.result-success .result-title {
+  color: #16a34a;
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.result-error {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.result-error .result-title {
+  color: var(--danger);
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.result-locked {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.result-locked .result-title {
+  color: #92400e;
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.result-meta {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.result-meta-item {
+  display: flex;
+  flex-direction: column;
+}
+.result-meta-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.result-meta-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: monospace;
+  color: var(--text);
+}
+.result-detail {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 6px;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+/* Status section */
+#status-body {
+  min-height: 60px;
+}
+.status-no-sub { color: var(--text-dim); font-size: 13px; }
+.status-waiting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 500;
+}
+.status-running {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+}
+.status-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.status-badge-inline {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: monospace;
+}
+.status-badge-done { background: #dcfce7; color: #15803d; }
+.status-badge-running { background: #dbeafe; color: #1d4ed8; }
+.status-badge-waiting { background: #fef3c7; color: #92400e; }
+.status-badge-none { background: var(--surface2); color: var(--text-dim); }
+
+/* Report table */
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 12px;
+}
+.report-table th {
+  text-align: left;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.report-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.report-table td:first-child { color: var(--text-dim); }
+.report-table td:last-child { font-family: monospace; font-weight: 600; color: var(--text); }
+
+/* Notices */
+.collapsible-btn {
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.collapsible-arrow {
+  color: var(--text-dim);
+  font-size: 12px;
+  transition: transform 0.2s;
+}
+.collapsible-arrow.open { transform: rotate(90deg); }
+#notices-body {
+  display: none;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+#notices-body.open { display: block; }
+.forbidden-list {
+  margin-top: 8px;
+  padding-left: 18px;
+}
+.forbidden-list li {
+  margin-bottom: 3px;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--danger);
+}
+.notice-item {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.notice-dot {
+  color: var(--accent);
+  flex-shrink: 0;
+  font-weight: 700;
+}
+.poll-indicator {
+  font-size: 11px;
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.poll-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+</style>
+</head>
+<body>
+
+<!-- Login screen -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <span class="login-logo-icon">🏎</span>
+      <div class="login-logo-title">AI Racer</div>
+      <div class="login-logo-sub">代码提交平台</div>
+    </div>
+    <div id="login-error" class="login-error">密码错误，请重试</div>
+    <div class="form-group">
+      <label for="input-team-id">队伍 ID</label>
+      <input type="text" id="input-team-id" placeholder="例如: A01" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label for="input-password">密码</label>
+      <input type="password" id="input-password" placeholder="队伍密码" autocomplete="current-password">
+    </div>
+    <button class="btn-primary" id="btn-login" onclick="handleLogin()">
+      <span id="login-btn-text">登录</span>
+      <span id="login-spinner" class="spinner" style="display:none;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.7s linear infinite"></span>
+    </button>
+  </div>
+</div>
+
+<!-- Main panel -->
+<div id="main-panel">
+  <div class="main-header">
+    <div class="header-brand">AI <span>Racer</span> 提交平台</div>
+    <div class="header-meta">
+      <div class="team-badge">
+        <span class="dot"></span>
+        <span id="header-team-id">—</span>
+      </div>
+      <button class="btn-logout" onclick="handleLogout()">退出登录</button>
+    </div>
+  </div>
+
+  <div id="locked-banner">
+    代码提交已关闭（管理员已锁定），不再接受新的提交。
+  </div>
+
+  <div class="main-content">
+
+    <!-- Submit section -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">提交代码</span>
+        <span class="file-hint">.py 文件，最大 1MB</span>
+      </div>
+      <div class="card-body">
+        <div id="dropzone">
+          <input type="file" id="file-input" accept=".py">
+          <span class="dz-icon">📂</span>
+          <div class="dz-text">将 .py 文件拖放至此，或点击选择</div>
+          <div class="dz-sub">支持拖拽上传</div>
+          <div class="dz-filename" id="dz-filename"></div>
+        </div>
+        <div class="submit-actions">
+          <button class="btn-submit" id="btn-submit" onclick="handleSubmit()" disabled>
+            <span class="spinner"></span>
+            <span class="btn-text">提交</span>
+          </button>
+          <span class="file-hint" id="submit-hint">请先选择文件</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Result card -->
+    <div class="card" id="result-card">
+      <div class="card-header">
+        <span class="card-title">提交结果</span>
+      </div>
+      <div class="card-body" id="result-body"></div>
+    </div>
+
+    <!-- Test status section -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">测试状态</span>
+        <span class="poll-indicator">
+          <span class="poll-dot"></span>
+          每 5 秒刷新
+        </span>
+      </div>
+      <div class="card-body" id="status-body">
+        <div class="status-no-sub">正在获取状态...</div>
+      </div>
+    </div>
+
+    <!-- Notices -->
+    <div class="card">
+      <div class="card-header">
+        <button class="collapsible-btn" onclick="toggleNotices()">
+          <span class="card-title">注意事项</span>
+          <span class="collapsible-arrow" id="notices-arrow">▶</span>
+        </button>
+      </div>
+      <div class="card-body">
+        <div id="notices-body">
+          <div class="notice-item">
+            <span class="notice-dot">·</span>
+            <span>每次提交会覆盖当前版本，提交后请等待测试完成再次提交。</span>
+          </div>
+          <div class="notice-item">
+            <span class="notice-dot">·</span>
+            <span>提交文件必须为 <code>.py</code> 格式，大小不超过 1MB。</span>
+          </div>
+          <div class="notice-item">
+            <span class="notice-dot">·</span>
+            <span>以下模块 <strong>禁止导入</strong>（系统会自动检测）：</span>
+          </div>
+          <ul class="forbidden-list">
+            <li>os, sys, subprocess, shutil</li>
+            <li>socket, requests, urllib, http</li>
+            <li>threading, multiprocessing, concurrent</li>
+            <li>ctypes, cffi, importlib</li>
+            <li>pickle, shelve (数据持久化)</li>
+            <li>open() 写文件操作</li>
+          </ul>
+          <div class="notice-item" style="margin-top:8px">
+            <span class="notice-dot">·</span>
+            <span>代码运行时间超过单圈时限会产生超时警告，三次警告将被取消资格。</span>
+          </div>
+          <div class="notice-item">
+            <span class="notice-dot">·</span>
+            <span>如有疑问，请联系赛事管理员。</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────
+const state = {
+  teamId: null,
+  password: null,
+  selectedFile: null,
+  isLocked: false,
+  pollTimer: null,
+};
+
+// ── Login ─────────────────────────────────────────
+async function handleLogin() {
+  const teamId = document.getElementById('input-team-id').value.trim();
+  const password = document.getElementById('input-password').value;
+  if (!teamId || !password) {
+    showLoginError('请输入队伍 ID 和密码');
+    return;
+  }
+  setLoginLoading(true);
+  await login(teamId, password);
+  setLoginLoading(false);
+}
+
+async function login(teamId, password) {
+  let resp;
+  try {
+    resp = await fetch('/api/test-status/' + encodeURIComponent(teamId), {
+      headers: { 'Authorization': 'Basic ' + btoa(teamId + ':' + password) }
+    });
+  } catch (e) {
+    showLoginError('无法连接服务器: ' + e.message);
+    return;
+  }
+  // 404 = no submission yet, but credentials valid
+  if (resp.status === 200 || resp.status === 404) {
+    state.teamId = teamId;
+    state.password = password;
+    hideLoginError();
+    showMainPanel();
+  } else if (resp.status === 401) {
+    showLoginError('密码错误，请重试');
+  } else {
+    showLoginError('登录失败 (HTTP ' + resp.status + ')');
+  }
+}
+
+function setLoginLoading(loading) {
+  const btn = document.getElementById('btn-login');
+  const spinner = document.getElementById('login-spinner');
+  const text = document.getElementById('login-btn-text');
+  btn.disabled = loading;
+  spinner.style.display = loading ? 'inline-block' : 'none';
+  text.textContent = loading ? '登录中...' : '登录';
+}
+
+function showLoginError(msg) {
+  const el = document.getElementById('login-error');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+function hideLoginError() {
+  document.getElementById('login-error').classList.remove('visible');
+}
+
+function handleLogout() {
+  state.teamId = null;
+  state.password = null;
+  state.selectedFile = null;
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+  document.getElementById('main-panel').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('input-password').value = '';
+}
+
+// Allow Enter key to submit login
+document.getElementById('input-password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') handleLogin();
+});
+document.getElementById('input-team-id').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('input-password').focus();
+});
+
+// ── Main panel ────────────────────────────────────
+async function showMainPanel() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('main-panel').style.display = 'block';
+  document.getElementById('header-team-id').textContent = state.teamId;
+
+  // Check lock status (best-effort via submit attempt — actually just show panel)
+  // We discover lock status when we get a "locked" response from /api/submit
+  // For initial state, try fetching standings or just proceed
+  await checkInitialStatus();
+  startPolling();
+}
+
+async function checkInitialStatus() {
+  // Check if submissions are locked by trying a lightweight endpoint
+  // There's no dedicated "get lock status" public endpoint, so we just fetch status
+  await refreshStatus();
+}
+
+// ── File handling ─────────────────────────────────
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) selectFile(fileInput.files[0]);
+});
+
+dropzone.addEventListener('dragover', e => {
+  e.preventDefault();
+  if (!state.isLocked) dropzone.classList.add('drag-over');
+});
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('drag-over');
+  if (state.isLocked) return;
+  if (e.dataTransfer.files[0]) selectFile(e.dataTransfer.files[0]);
+});
+
+function selectFile(file) {
+  state.selectedFile = file;
+  const fn = document.getElementById('dz-filename');
+  fn.textContent = file.name + ' (' + formatSize(file.size) + ')';
+  fn.classList.add('visible');
+  document.querySelector('.dz-icon').textContent = '📄';
+  document.querySelector('.dz-text').textContent = '已选择文件';
+  const btn = document.getElementById('btn-submit');
+  const hint = document.getElementById('submit-hint');
+  if (!state.isLocked) {
+    btn.disabled = false;
+    hint.textContent = '准备提交';
+  }
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
+  return (bytes / 1024 / 1024).toFixed(1) + 'MB';
+}
+
+// ── Submit ────────────────────────────────────────
+async function handleSubmit() {
+  const file = state.selectedFile;
+  if (!file) { alert('请先选择文件'); return; }
+  if (!file.name.endsWith('.py')) { alert('请上传 .py 文件'); return; }
+  if (file.size > 1024 * 1024) { alert('文件过大（最大 1MB）'); return; }
+  await submitCode(file);
+}
+
+async function submitCode(file) {
+  let b64;
+  try {
+    b64 = await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = e => res(btoa(e.target.result));
+      reader.onerror = rej;
+      reader.readAsBinaryString(file);
+    });
+  } catch (e) {
+    alert('读取文件失败: ' + e.message);
+    return;
+  }
+
+  setSubmitting(true);
+  let resp, data;
+  try {
+    resp = await fetch('/api/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ team_id: state.teamId, password: state.password, code: b64 })
+    });
+    data = await resp.json();
+  } catch (e) {
+    setSubmitting(false);
+    showCheckResult({ status: 'error', stage: 'network', detail: e.message });
+    return;
+  }
+
+  setSubmitting(false);
+  showCheckResult(data);
+
+  if (data.status === 'queued') {
+    // Restart polling immediately
+    if (state.pollTimer) clearInterval(state.pollTimer);
+    await refreshStatus();
+    startPolling();
+  } else if (data.status === 'locked') {
+    setLocked(true);
+  }
+}
+
+function setSubmitting(loading) {
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = loading;
+  if (loading) {
+    btn.classList.add('loading');
+    btn.querySelector('.btn-text').textContent = '提交中...';
+  } else {
+    btn.classList.remove('loading');
+    btn.querySelector('.btn-text').textContent = '提交';
+  }
+}
+
+function showCheckResult(data) {
+  const card = document.getElementById('result-card');
+  const body = document.getElementById('result-body');
+  card.classList.add('visible');
+
+  if (data.status === 'queued') {
+    body.innerHTML = `
+      <div class="result-success">
+        <div class="result-title">提交成功</div>
+        <div class="result-meta">
+          <div class="result-meta-item">
+            <span class="result-meta-label">版本号</span>
+            <span class="result-meta-value">${data.version || '—'}</span>
+          </div>
+          <div class="result-meta-item">
+            <span class="result-meta-label">队列位置</span>
+            <span class="result-meta-value">#${data.queue_position != null ? data.queue_position : '—'}</span>
+          </div>
+        </div>
+      </div>`;
+  } else if (data.status === 'locked') {
+    body.innerHTML = `
+      <div class="result-locked">
+        <div class="result-title">提交已关闭</div>
+        <div class="result-detail">${data.detail || '管理员已锁定代码提交。'}</div>
+      </div>`;
+  } else if (data.status === 'error') {
+    body.innerHTML = `
+      <div class="result-error">
+        <div class="result-title">提交失败</div>
+        <div class="result-meta">
+          <div class="result-meta-item">
+            <span class="result-meta-label">阶段</span>
+            <span class="result-meta-value">${data.stage || '未知'}</span>
+          </div>
+        </div>
+        <div class="result-detail">${escHtml(data.detail || '未知错误')}</div>
+      </div>`;
+  } else {
+    body.innerHTML = `<div class="result-detail">${escHtml(JSON.stringify(data))}</div>`;
+  }
+}
+
+function setLocked(locked) {
+  state.isLocked = locked;
+  const banner = document.getElementById('locked-banner');
+  const dz = document.getElementById('dropzone');
+  const btn = document.getElementById('btn-submit');
+  const hint = document.getElementById('submit-hint');
+  if (locked) {
+    banner.classList.add('visible');
+    dz.classList.add('disabled');
+    btn.disabled = true;
+    hint.textContent = '提交已关闭';
+  } else {
+    banner.classList.remove('visible');
+    dz.classList.remove('disabled');
+    if (state.selectedFile) btn.disabled = false;
+  }
+}
+
+// ── Status polling ────────────────────────────────
+function startPolling() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(refreshStatus, 5000);
+}
+
+async function refreshStatus() {
+  if (!state.teamId) return;
+  let resp, data;
+  try {
+    resp = await fetch('/api/test-status/' + encodeURIComponent(state.teamId), {
+      headers: { 'Authorization': 'Basic ' + btoa(state.teamId + ':' + state.password) }
+    });
+    data = await resp.json();
+  } catch (e) {
+    document.getElementById('status-body').innerHTML =
+      '<div class="status-no-sub" style="color:#ef4444">获取状态失败: ' + escHtml(e.message) + '</div>';
+    return;
+  }
+
+  if (resp.status === 404 || data.queue_status === 'no_submission') {
+    document.getElementById('status-body').innerHTML =
+      '<div class="status-no-sub">尚未提交</div>';
+    return;
+  }
+
+  renderStatus(data);
+}
+
+function renderStatus(data) {
+  const body = document.getElementById('status-body');
+  const qs = data.queue_status;
+  let html = '';
+
+  // Version info
+  if (data.latest_version) {
+    html += `<div style="margin-bottom:12px;font-size:13px;color:var(--text-dim)">
+      当前版本: <span style="font-family:monospace;font-weight:600;color:var(--text)">${escHtml(String(data.latest_version))}</span>
+    </div>`;
+  }
+
+  // Queue status
+  if (qs === 'no_submission') {
+    html += '<div class="status-no-sub">尚未提交</div>';
+  } else if (qs === 'waiting') {
+    html += `<div class="status-waiting">
+      <span class="status-spinner"></span>
+      <span>排队中，位置：<strong>${data.queue_position != null ? '#' + data.queue_position : '—'}</strong></span>
+    </div>`;
+  } else if (qs === 'running') {
+    html += `<div class="status-running">
+      <span class="status-spinner"></span>
+      <span>测试进行中...</span>
+    </div>`;
+  } else if (qs === 'done') {
+    html += `<div style="margin-bottom:10px">
+      <span class="status-badge-inline status-badge-done">测试完成</span>
+    </div>`;
+    if (data.report) {
+      html += renderReport(data.report);
+    }
+  } else {
+    html += `<div class="status-no-sub">状态: ${escHtml(qs || '未知')}</div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+function renderReport(r) {
+  const rows = [
+    ['完成圈数', r.laps_completed != null ? r.laps_completed : '—'],
+    ['最快圈时', r.best_lap_time != null ? r.best_lap_time.toFixed(3) + 's' : '—'],
+    ['轻微碰撞', r.collisions_minor != null ? r.collisions_minor : '—'],
+    ['严重碰撞', r.collisions_major != null ? r.collisions_major : '—'],
+    ['超时警告', r.timeout_warnings != null ? r.timeout_warnings : '—'],
+    ['结束原因', r.finish_reason ? escHtml(r.finish_reason) : '—'],
+  ];
+  return `<table class="report-table">
+    <thead><tr><th>指标</th><th>数值</th></tr></thead>
+    <tbody>${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</tbody>
+  </table>`;
+}
+
+// ── Notices ───────────────────────────────────────
+function toggleNotices() {
+  const body = document.getElementById('notices-body');
+  const arrow = document.getElementById('notices-arrow');
+  const open = body.classList.toggle('open');
+  arrow.classList.toggle('open', open);
+  arrow.textContent = open ? '▼' : '▶';
+}
+
+// ── Utils ─────────────────────────────────────────
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Racer 管理控制台</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --sidebar-bg: #1e293b;
+  --sidebar-text: #94a3b8;
+  --sidebar-active: #3b82f6;
+  --sidebar-active-bg: rgba(59,130,246,0.15);
+  --sidebar-hover: rgba(255,255,255,0.06);
+  --sidebar-border: #2d3f55;
+  --content-bg: #f8fafc;
+  --surface: #ffffff;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --text-dim: #64748b;
+  --text-light: #94a3b8;
+  --accent: #3b82f6;
+  --accent-dark: #2563eb;
+  --success: #22c55e;
+  --danger: #ef4444;
+  --warn: #f59e0b;
+  --purple: #a855f7;
+  --gray: #94a3b8;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+  --font: system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --sidebar-w: 200px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--content-bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+/* ── Login screen ─────────────────────────────── */
+#login-screen {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sidebar-bg);
+}
+.login-card {
+  background: #243447;
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--radius-lg);
+  padding: 40px;
+  width: 340px;
+  box-shadow: var(--shadow-md);
+}
+.login-title {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.login-sub {
+  color: var(--sidebar-text);
+  font-size: 13px;
+  margin-bottom: 24px;
+}
+.login-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sidebar-text);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.login-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--radius);
+  background: #1e293b;
+  color: #fff;
+  font-size: 14px;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color 0.15s;
+  margin-bottom: 16px;
+}
+.login-input:focus { border-color: var(--accent); }
+.login-input::placeholder { color: #4a5e77; }
+.btn-login {
+  width: 100%;
+  padding: 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-login:hover:not(:disabled) { background: var(--accent-dark); }
+.btn-login:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+.login-error {
+  background: rgba(239,68,68,0.1);
+  border: 1px solid rgba(239,68,68,0.3);
+  color: #fca5a5;
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  display: none;
+}
+.login-error.visible { display: block; }
+
+/* ── App layout ───────────────────────────────── */
+#app {
+  display: none;
+  height: 100vh;
+  flex-direction: row;
+}
+
+/* Sidebar */
+#sidebar {
+  width: var(--sidebar-w);
+  background: var(--sidebar-bg);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-right: 1px solid var(--sidebar-border);
+  overflow-y: auto;
+}
+.sidebar-logo {
+  padding: 20px 16px 16px;
+  border-bottom: 1px solid var(--sidebar-border);
+}
+.sidebar-logo-title {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.sidebar-logo-sub {
+  color: var(--sidebar-text);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.sidebar-nav {
+  flex: 1;
+  padding: 12px 0;
+}
+.nav-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #4a5e77;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 8px 16px 4px;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  cursor: pointer;
+  color: var(--sidebar-text);
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font);
+  border-radius: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.nav-item:hover { background: var(--sidebar-hover); color: #cbd5e1; }
+.nav-item.active { background: var(--sidebar-active-bg); color: #fff; }
+.nav-item .nav-icon { font-size: 14px; width: 18px; text-align: center; }
+
+.sidebar-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--sidebar-border);
+}
+.sidebar-admin-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--sidebar-text);
+}
+.sidebar-admin-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+.btn-signout {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px;
+  background: none;
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--radius);
+  color: var(--sidebar-text);
+  font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.btn-signout:hover { color: #fff; border-color: #4a5e77; }
+
+/* Content area */
+#content {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--content-bg);
+}
+.section {
+  display: none;
+  padding: 28px 32px;
+  max-width: 900px;
+}
+.section.active { display: block; }
+
+.section-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.section-title .icon { font-size: 20px; }
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.card-header {
+  padding: 14px 20px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.card-body { padding: 20px; }
+.card-body.compact { padding: 14px 20px; }
+
+/* Sim status */
+.sim-state-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.state-idle { background: rgba(148,163,184,0.15); color: var(--gray); }
+.state-idle .state-dot { background: var(--gray); }
+.state-running { background: rgba(34,197,94,0.12); color: var(--success); }
+.state-running .state-dot { background: var(--success); animation: pulse 1.5s infinite; }
+.state-recording_ready { background: rgba(59,130,246,0.12); color: var(--accent); }
+.state-recording_ready .state-dot { background: var(--accent); }
+.state-aborted { background: rgba(239,68,68,0.12); color: var(--danger); }
+.state-aborted .state-dot { background: var(--danger); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+.sim-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.sim-info-item {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+.sim-info-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.sim-info-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: monospace;
+  color: var(--text);
+  word-break: break-all;
+}
+.ws-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+}
+.ws-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gray);
+}
+.ws-dot.connected { background: var(--success); }
+.ws-dot.error { background: var(--danger); }
+
+.replay-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 12px;
+  transition: background 0.15s;
+}
+.replay-link:hover { background: var(--accent-dark); }
+
+/* Race controls */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-group.full { grid-column: 1 / -1; }
+.form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.form-input, .form-select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.form-input:focus, .form-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+.form-input-hint {
+  font-size: 11px;
+  color: var(--text-light);
+  margin-top: 2px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.12s, transform 0.08s, opacity 0.12s;
+  white-space: nowrap;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-default { background: #f1f5f9; color: var(--text); border: 1px solid var(--border); }
+.btn-default:hover:not(:disabled) { background: #e2e8f0; }
+.btn-accent { background: var(--accent); color: #fff; }
+.btn-accent:hover:not(:disabled) { background: var(--accent-dark); }
+.btn-success { background: var(--success); color: #fff; }
+.btn-success:hover:not(:disabled) { background: #16a34a; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #dc2626; }
+.btn-warn { background: var(--warn); color: #000; }
+.btn-warn:hover:not(:disabled) { background: #d97706; }
+.btn-dark { background: #334155; color: #fff; }
+.btn-dark:hover:not(:disabled) { background: #475569; }
+
+.danger-zone {
+  border: 1px solid rgba(239,68,68,0.35);
+  border-radius: var(--radius);
+  padding: 16px;
+  background: rgba(239,68,68,0.03);
+  margin-top: 14px;
+}
+.danger-zone-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--danger);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Standings / tables */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-table thead tr {
+  background: #f8fafc;
+  border-bottom: 2px solid var(--border);
+}
+.data-table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.data-table tbody tr:hover { background: #f8fafc; }
+.data-table tbody tr:last-child td { border-bottom: none; }
+.mono { font-family: monospace; }
+
+.refresh-hint {
+  font-size: 11px;
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.auto-refresh-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: pulse 2s infinite;
+}
+
+/* Recordings */
+.rec-cards { display: flex; flex-direction: column; gap: 10px; }
+.rec-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: border-color 0.12s;
+}
+.rec-card:hover { border-color: #94a3b8; }
+.rec-id { font-family: monospace; font-weight: 600; font-size: 13px; color: var(--text); }
+.rec-meta { font-size: 12px; color: var(--text-dim); margin-top: 3px; display: flex; gap: 10px; align-items: center; }
+.rec-finish-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.finish-normal { background: #dcfce7; color: #15803d; }
+.finish-timeout { background: #fef3c7; color: #92400e; }
+.finish-aborted { background: #fee2e2; color: #991b1b; }
+.finish-unknown { background: #f1f5f9; color: #64748b; }
+
+.btn-play-rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.12s;
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+.btn-play-rec:hover { background: var(--accent-dark); }
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  background: #1e293b;
+  color: #fff;
+  padding: 12px 18px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 9999;
+  animation: slideUp 0.2s ease;
+  max-width: 320px;
+  border-left: 3px solid var(--success);
+}
+.toast.toast-error { border-left-color: var(--danger); }
+.toast.toast-warn { border-left-color: var(--warn); }
+@keyframes slideUp {
+  from { transform: translateY(12px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* Loading states */
+.loading-row {
+  padding: 30px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.empty-row {
+  padding: 30px;
+  text-align: center;
+  color: var(--text-light);
+  font-size: 13px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+
+/* Responsive: narrow screens */
+@media (max-width: 640px) {
+  .form-grid { grid-template-columns: 1fr; }
+  #sidebar { width: 160px; }
+  .section { padding: 20px 16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-title">管理控制台</div>
+    <div class="login-sub">AI Racer 赛事管理系统</div>
+    <div id="login-error" class="login-error"></div>
+    <label class="login-label">管理员密码</label>
+    <input type="password" id="input-pwd" class="login-input" placeholder="输入密码" autocomplete="current-password">
+    <button class="btn-login" id="btn-login" onclick="handleLogin()">进入控制台</button>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-title">AI Racer</div>
+      <div class="sidebar-logo-sub">管理控制台</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">监控</div>
+      <button class="nav-item active" data-section="sim" onclick="switchSection('sim', this)">
+        <span class="nav-icon">📡</span> 仿真状态
+      </button>
+      <div class="nav-section-label">操作</div>
+      <button class="nav-item" data-section="race" onclick="switchSection('race', this)">
+        <span class="nav-icon">🏁</span> 比赛控制
+      </button>
+      <div class="nav-section-label">数据</div>
+      <button class="nav-item" data-section="standings" onclick="switchSection('standings', this)">
+        <span class="nav-icon">📊</span> 积分总览
+      </button>
+      <button class="nav-item" data-section="recordings" onclick="switchSection('recordings', this)">
+        <span class="nav-icon">🎬</span> 录制列表
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-admin-badge">
+        <span class="sidebar-admin-dot"></span>
+        <span>admin</span>
+      </div>
+      <button class="btn-signout" onclick="handleSignOut()">退出登录</button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div id="content">
+
+    <!-- Sim Status -->
+    <div id="section-sim" class="section active">
+      <div class="section-title"><span class="icon">📡</span> 仿真状态</div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">WebSocket 连接</span>
+          <div class="ws-status" id="ws-status-row">
+            <span class="ws-dot" id="ws-dot"></span>
+            <span id="ws-status-text">未连接</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="sim-state-row">
+            <div class="state-badge state-idle" id="state-badge">
+              <span class="state-dot"></span>
+              <span id="state-text">idle</span>
+            </div>
+          </div>
+          <div class="sim-info-grid">
+            <div class="sim-info-item">
+              <div class="sim-info-label">场次 ID</div>
+              <div class="sim-info-value" id="sim-session-id">—</div>
+            </div>
+            <div class="sim-info-item">
+              <div class="sim-info-label">仿真时间</div>
+              <div class="sim-info-value" id="sim-time">—</div>
+            </div>
+            <div class="sim-info-item">
+              <div class="sim-info-label">Webots PID</div>
+              <div class="sim-info-value" id="sim-pid">—</div>
+            </div>
+            <div class="sim-info-item">
+              <div class="sim-info-label">录制路径</div>
+              <div class="sim-info-value" id="sim-rec-path" style="font-size:11px;word-break:break-all">—</div>
+            </div>
+          </div>
+          <div id="replay-link-container" style="display:none;margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Race Controls -->
+    <div id="section-race" class="section">
+      <div class="section-title"><span class="icon">🏁</span> 比赛控制</div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">场次配置</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">场次类型</label>
+              <select class="form-select" id="f-session-type">
+                <option value="qualifying">排位赛 (qualifying)</option>
+                <option value="group_race">分组赛 (group_race)</option>
+                <option value="semi">半决赛 (semi)</option>
+                <option value="final">决赛 (final)</option>
+                <option value="test">测试 (test)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">场次 ID</label>
+              <input type="text" class="form-input" id="f-session-id" placeholder="如 group_race_G1">
+            </div>
+            <div class="form-group">
+              <label class="form-label">参赛队伍</label>
+              <input type="text" class="form-input" id="f-team-ids" placeholder="A01,B02,C03（逗号分隔）">
+              <span class="form-input-hint">用英文逗号分隔多个队伍 ID</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">总圈数</label>
+              <input type="number" class="form-input" id="f-total-laps" min="1" max="10" value="3">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">控制操作</span></div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button class="btn btn-accent" onclick="doSetSession()">配置场次</button>
+            <button class="btn btn-success" onclick="doAction('start-race', '确定开始比赛？')">开始比赛</button>
+            <button class="btn btn-warn" onclick="doAction('stop-race', '确定停止比赛？')">停止比赛</button>
+            <button class="btn btn-default" onclick="doAction('reset-track', '确定重置赛道？')">重置赛道</button>
+          </div>
+          <div class="btn-row" style="margin-top:6px">
+            <button class="btn btn-dark" onclick="doAction('finalize-qualifying', '确定完成排位赛？')">完成排位</button>
+            <button class="btn btn-dark" onclick="doAction('finalize-group', '确定完成分组赛？')">完成分组赛</button>
+            <button class="btn btn-dark" onclick="doAction('finalize-semi', '确定完成半决赛？')">完成半决赛</button>
+            <button class="btn btn-dark" onclick="doAction('close-event', '确定关闭赛事？此操作不可撤销。')">关闭赛事</button>
+          </div>
+          <div class="danger-zone">
+            <div class="danger-zone-title">危险操作</div>
+            <button class="btn btn-danger" onclick="doLockSubmissions()">锁定提交（不可逆）</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Standings -->
+    <div id="section-standings" class="section">
+      <div class="section-title"><span class="icon">📊</span> 积分总览</div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">当前积分</span>
+          <div class="refresh-hint">
+            <span class="auto-refresh-dot"></span> 每 30 秒刷新
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div id="standings-body">
+            <div class="loading-row">加载中...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recordings -->
+    <div id="section-recordings" class="section">
+      <div class="section-title"><span class="icon">🎬</span> 录制列表</div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">已录制场次</span>
+          <button class="btn btn-default" style="padding:5px 12px;font-size:12px" onclick="loadRecordings()">刷新</button>
+        </div>
+        <div class="card-body" style="padding:12px 16px">
+          <div id="recordings-body" class="rec-cards">
+            <div class="loading-row">加载中...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Globals ──────────────────────────────────────
+let adminPwd = '';
+let ws = null;
+let wsReconnectTimer = null;
+let standingsTimer = null;
+let activeSection = 'sim';
+
+// ── Login ─────────────────────────────────────────
+document.getElementById('input-pwd').addEventListener('keydown', e => {
+  if (e.key === 'Enter') handleLogin();
+});
+
+async function handleLogin() {
+  const pwd = document.getElementById('input-pwd').value;
+  if (!pwd) { showLoginError('请输入密码'); return; }
+
+  const btn = document.getElementById('btn-login');
+  btn.disabled = true;
+  btn.textContent = '验证中...';
+
+  const result = await adminCall('GET', '/api/admin/standings', null, pwd);
+  btn.disabled = false;
+  btn.textContent = '进入控制台';
+
+  if (result.ok || result.status === 200) {
+    adminPwd = pwd;
+    hideLoginError();
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    initApp();
+  } else if (result.status === 401) {
+    showLoginError('密码错误，请重试');
+  } else {
+    showLoginError('登录失败 (HTTP ' + result.status + ')');
+  }
+}
+
+function handleSignOut() {
+  adminPwd = '';
+  if (ws) { ws.close(); ws = null; }
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('input-pwd').value = '';
+}
+
+function showLoginError(msg) {
+  const el = document.getElementById('login-error');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+function hideLoginError() {
+  document.getElementById('login-error').classList.remove('visible');
+}
+
+// ── App init ──────────────────────────────────────
+function initApp() {
+  connectWebSocket();
+  loadRecordings();
+  loadStandings();
+  standingsTimer = setInterval(loadStandings, 30000);
+}
+
+// ── Section switching ─────────────────────────────
+function switchSection(name, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  btn.classList.add('active');
+  activeSection = name;
+
+  if (name === 'standings') loadStandings();
+  if (name === 'recordings') loadRecordings();
+}
+
+// ── WebSocket ─────────────────────────────────────
+function connectWebSocket() {
+  if (ws) { ws.close(); ws = null; }
+  setWsStatus('connecting');
+
+  try {
+    ws = new WebSocket('ws://' + location.hostname + ':8000/ws/admin');
+  } catch (e) {
+    setWsStatus('error');
+    scheduleReconnect();
+    return;
+  }
+
+  ws.onopen = () => {
+    setWsStatus('connected');
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'sim_status') handleSimStatus(msg);
+    } catch (e) {
+      console.warn('WS parse error:', e);
+    }
+  };
+
+  ws.onclose = () => {
+    setWsStatus('disconnected');
+    scheduleReconnect();
+  };
+
+  ws.onerror = () => {
+    setWsStatus('error');
+    if (ws) { ws.close(); ws = null; }
+  };
+}
+
+function scheduleReconnect() {
+  if (wsReconnectTimer) return;
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    if (adminPwd) connectWebSocket();
+  }, 3000);
+}
+
+function setWsStatus(status) {
+  const dot = document.getElementById('ws-dot');
+  const text = document.getElementById('ws-status-text');
+  dot.className = 'ws-dot';
+  if (status === 'connected') {
+    dot.classList.add('connected');
+    text.textContent = '已连接';
+  } else if (status === 'connecting') {
+    text.textContent = '连接中...';
+  } else if (status === 'error') {
+    dot.classList.add('error');
+    text.textContent = '连接错误，3秒后重试';
+  } else {
+    text.textContent = '已断开，3秒后重试';
+  }
+}
+
+function handleSimStatus(msg) {
+  const state = msg.state || 'idle';
+
+  // State badge
+  const badge = document.getElementById('state-badge');
+  badge.className = 'state-badge state-' + state;
+  const stateLabels = {
+    idle: '空闲 (idle)',
+    running: '运行中 (running)',
+    recording_ready: '录制就绪 (recording_ready)',
+    aborted: '已中止 (aborted)'
+  };
+  document.getElementById('state-text').textContent = stateLabels[state] || state;
+  badge.querySelector('.state-dot').className = 'state-dot';
+
+  // Info fields
+  document.getElementById('sim-session-id').textContent = msg.session_id || '—';
+  document.getElementById('sim-pid').textContent = msg.webots_pid != null ? String(msg.webots_pid) : '—';
+  document.getElementById('sim-rec-path').textContent = msg.recording_path || '—';
+  document.getElementById('sim-time').textContent =
+    msg.sim_time_approx != null ? formatSimTime(msg.sim_time_approx) : '—';
+
+  // Replay link when recording ready
+  const replayContainer = document.getElementById('replay-link-container');
+  if (state === 'recording_ready' && msg.session_id) {
+    replayContainer.style.display = 'block';
+    replayContainer.innerHTML =
+      `<a class="replay-link" href="/race/?session=${encodeURIComponent(msg.session_id)}" target="_blank">
+        ▶ 播放回放
+      </a>`;
+  } else {
+    replayContainer.style.display = 'none';
+  }
+}
+
+function formatSimTime(t) {
+  if (t == null || isNaN(t)) return '—';
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+// ── Race controls ─────────────────────────────────
+async function doSetSession() {
+  const sessionType = document.getElementById('f-session-type').value;
+  const sessionId = document.getElementById('f-session-id').value.trim();
+  const teamIdsRaw = document.getElementById('f-team-ids').value.trim();
+  const totalLaps = parseInt(document.getElementById('f-total-laps').value, 10);
+
+  if (!sessionId) { toast('请填写场次 ID', true); return; }
+  if (!teamIdsRaw) { toast('请填写参赛队伍', true); return; }
+  if (!confirm('确定配置场次 "' + sessionId + '"？')) return;
+
+  const teamIds = teamIdsRaw.split(',').map(s => s.trim()).filter(Boolean);
+  const result = await adminCall('POST', '/api/admin/set-session', {
+    session_type: sessionType,
+    session_id: sessionId,
+    team_ids: teamIds,
+    total_laps: totalLaps
+  });
+
+  if (result.ok) {
+    toast('场次已配置: ' + sessionId);
+  } else {
+    toast('配置失败: ' + (result.data.detail || 'HTTP ' + result.status), true);
+  }
+}
+
+async function doAction(endpoint, confirmMsg) {
+  if (!confirm(confirmMsg)) return;
+  const result = await adminCall('POST', '/api/admin/' + endpoint);
+  if (result.ok) {
+    toast(getActionLabel(endpoint) + ' 成功');
+  } else {
+    toast(getActionLabel(endpoint) + ' 失败: ' + (result.data.detail || 'HTTP ' + result.status), true);
+  }
+}
+
+async function doLockSubmissions() {
+  if (!confirm('确定锁定代码提交？此操作不可逆，锁定后所有队伍将无法提交新代码。')) return;
+  const result = await adminCall('POST', '/api/admin/lock-submissions');
+  if (result.ok) {
+    toast('提交已锁定');
+  } else {
+    toast('锁定失败: ' + (result.data.detail || 'HTTP ' + result.status), true);
+  }
+}
+
+function getActionLabel(endpoint) {
+  const labels = {
+    'start-race': '开始比赛',
+    'stop-race': '停止比赛',
+    'reset-track': '重置赛道',
+    'finalize-qualifying': '完成排位',
+    'finalize-group': '完成分组赛',
+    'finalize-semi': '完成半决赛',
+    'close-event': '关闭赛事',
+  };
+  return labels[endpoint] || endpoint;
+}
+
+// ── Standings ─────────────────────────────────────
+async function loadStandings() {
+  const result = await adminCall('GET', '/api/admin/standings');
+  const body = document.getElementById('standings-body');
+
+  if (!result.ok) {
+    body.innerHTML = '<div class="loading-row" style="color:#ef4444">加载失败 (HTTP ' + result.status + ')</div>';
+    return;
+  }
+
+  const standings = result.data;
+  if (!standings || !standings.length) {
+    body.innerHTML = '<div class="empty-row">暂无积分数据</div>';
+    return;
+  }
+
+  body.innerHTML = `
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>队伍 ID</th>
+          <th>队伍名称</th>
+          <th>排位时间</th>
+          <th>积分</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${standings.map((s, i) => `
+          <tr>
+            <td class="mono">${i + 1}</td>
+            <td class="mono">${escHtml(s.team_id || '—')}</td>
+            <td>${escHtml(s.team_name || '—')}</td>
+            <td class="mono">${s.qualifying_time != null ? s.qualifying_time.toFixed(3) + 's' : '—'}</td>
+            <td class="mono"><strong>${s.points != null ? s.points : '—'}</strong></td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+// ── Recordings ────────────────────────────────────
+async function loadRecordings() {
+  const body = document.getElementById('recordings-body');
+  body.innerHTML = '<div class="loading-row">加载中...</div>';
+
+  let resp;
+  try {
+    resp = await fetch('/api/recordings');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const sessions = await resp.json();
+
+    if (!sessions.length) {
+      body.innerHTML = '<div class="empty-row">暂无录制</div>';
+      return;
+    }
+
+    const typeLabels = {
+      qualifying: '排位赛', group_race: '分组赛',
+      semi: '半决赛', final: '决赛', test: '测试'
+    };
+
+    body.innerHTML = sessions.map(s => {
+      const typeLabel = typeLabels[s.session_type] || s.session_type || '—';
+      const finishClass = 'finish-' + (s.finish_reason || 'unknown');
+      const finishLabel = s.finish_reason || '—';
+      return `<div class="rec-card">
+        <div>
+          <div class="rec-id">${escHtml(s.session_id)}</div>
+          <div class="rec-meta">
+            <span>${typeLabel}</span>
+            ${s.recorded_at ? `<span>${escHtml(s.recorded_at)}</span>` : ''}
+            <span class="rec-finish-badge ${escHtml(finishClass)}">${escHtml(finishLabel)}</span>
+          </div>
+        </div>
+        <a class="btn-play-rec" href="/race/?session=${encodeURIComponent(s.session_id)}" target="_blank">▶ 播放</a>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = '<div class="loading-row" style="color:#ef4444">加载失败: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+// ── Admin API helper ──────────────────────────────
+async function adminCall(method, path, body = null, pwdOverride = null) {
+  const pwd = pwdOverride !== null ? pwdOverride : adminPwd;
+  const opts = {
+    method,
+    headers: {
+      'Authorization': 'Basic ' + btoa('admin:' + pwd),
+      'Content-Type': 'application/json',
+    }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const resp = await fetch(path, opts);
+    let data = {};
+    try { data = await resp.json(); } catch (e) { /* no body */ }
+    return { ok: resp.ok, status: resp.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, data: { detail: e.message } };
+  }
+}
+
+// ── Toast ─────────────────────────────────────────
+function toast(msg, isError = false, isWarn = false) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (isError ? ' toast-error' : isWarn ? ' toast-warn' : '');
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = 'opacity 0.3s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 300);
+  }, 2700);
+}
+
+// ── Utils ─────────────────────────────────────────
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>

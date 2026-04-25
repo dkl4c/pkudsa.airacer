@@ -1,7 +1,7 @@
 # AI Racer 平台开发任务书
 
-> 2026年春季数算B大作业——AI赛车竞速平台  
-> 版本 v1.3 | 2026-04-10  
+> 2026年春季数算B大作业——AI赛车竞速平台
+> 版本 v1.4 | 2026-04-24
 
 ---
 
@@ -9,13 +9,13 @@
 
 ### 1.1 背景
 
-本平台为课程大作业竞赛系统。参赛学生团队（约25组）各自编写纯视觉自动驾驶算法，算法以 Python 文件形式提交，由平台加载到 Webots 仿真车辆上，在同一台中心机器上进行实时仿真竞速比赛。
+本平台为课程大作业竞赛系统。参赛学生团队（约25组）各自编写纯视觉自动驾驶算法，算法以 Python 文件形式提交，由平台加载到 Webots 仿真车辆上，在同一台中心机器上进行仿真竞速比赛。仿真过程以录制文件形式保存，比赛结束后可通过前端回放播放器进行回放。
 
 ### 1.2 系统功能要求
 
 1. **输入限制**：所有参赛车辆的控制算法唯一数据来源为双目摄像头图像（BGR格式 numpy 数组），平台不向算法提供位置坐标、速度、地图或任何其他传感器数据
 2. **统一参数**：所有参赛车辆的物理参数、摄像头参数、起跑位置间距完全一致
-3. **实时可视化**：仿真进行中，比赛画面和数据实时推送到前端，可通过局域网内任意浏览器访问
+3. **录制回放**：仿真过程持续写入遥测数据文件（JSONL格式），仿真结束后可通过前端回放播放器加载并播放
 4. **自助模拟测试**：参赛队伍在赛前提交代码后，可在平台上申请单车模拟测试，查看算法运行结果，并可多次更新提交
 5. **代码隔离执行**：每支队伍的代码运行在独立沙箱进程中，不能访问文件系统、网络或其他队伍的数据
 6. **赛程管理**：助教通过管理控制台控制赛程推进，包括开始/停止比赛、锁定代码提交、调整分组对阵
@@ -24,31 +24,32 @@
 
 | 层次 | 技术 |
 |------|------|
-| 仿真平台 | Webots R2023b（Linux 版）|
+| 仿真平台 | Webots R2023b（Windows 版）|
 | 仿真控制器 | Python 3.10+ |
 | 后端 | Python / FastAPI / SQLite / WebSocket |
 | 前端 | HTML + CSS + JavaScript（原生，不依赖前端框架）|
-| 运行平台 | Linux（中心机器），局域网内浏览器访问 |
+| 运行平台 | Windows 11（中心机器），局域网内浏览器访问 |
 
 ### 1.4 架构总览
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                     中心机器 (Linux)                      │
-│                                                          │
-│  ┌─────────────────────┐    ┌────────────────────────┐   │
-│  │    模块一 + 模块二    │    │        模块三           │   │
-│  │  Webots 仿真环境     │TCP │    赛事管理后端          │   │
-│  │  + 仿真控制器        │◄──►│    FastAPI + WebSocket  │   │
-│  └─────────────────────┘    └──────────┬───────────────┘  │
-│  Webots Web Stream (port 1234)          │ WebSocket / REST  │
-└──────────────────────┬─────────────────┼───────────────────┘
-                       │                 │
-                       ▼                 ▼
-              ┌─────────────────────────────────────┐
-              │      模块四：前端（浏览器访问）        │
-              │  大屏比赛页 / 提交页 / 助教控制台     │
-              └─────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    中心机器 (Windows 11)                       │
+│                                                              │
+│  ┌──────────────────────┐    ┌──────────────────────────┐   │
+│  │      模块一           │    │        模块二              │   │
+│  │  Webots 仿真          │录制 │    赛事管理后端            │   │
+│  │  赛道 + 控制器 + 沙箱  │文件 │    FastAPI + WebSocket   │   │
+│  │  （写入 telemetry.jsonl）│◄──►│    （提供录制文件服务）     │   │
+│  └──────────────────────┘    └────────────┬─────────────┘   │
+│                                           │ WebSocket / REST  │
+└───────────────────────────────────────────┼──────────────────┘
+                                            │
+                                            ▼
+                               ┌────────────────────────────┐
+                               │      模块三：前端（浏览器访问）│
+                               │  回放播放页 / 提交页 / 控制台 │
+                               └────────────────────────────┘
 ```
 
 ---
@@ -137,11 +138,14 @@ def control(left_img: np.ndarray,
 
 ---
 
-## 三、模块一：Webots 仿真环境
+## 三、模块一：Webots 仿真（赛道 + 控制器 + 沙箱）
 
 ### 3.1 负责范围
 
-构建完整的 Webots 世界文件（`.wbt`），包含赛道几何、车辆模型、障碍物初始布置、加速包模型、光照与物理参数配置。本模块不包含控制器逻辑，控制器由模块二负责。
+本模块涵盖两类工作：
+
+1. **赛道建模**：构建完整的 Webots 世界文件（`.wbt`），包含赛道几何、车辆模型、障碍物初始布置、加速包模型、光照与物理参数配置
+2. **仿真控制器**：编写 Supervisor 控制器和车辆控制器框架，负责比赛裁判逻辑、学生代码加载与沙箱执行，并将仿真遥测数据写入录制文件
 
 ### 3.2 交付物
 
@@ -149,11 +153,17 @@ def control(left_img: np.ndarray,
 webots/
 ├── worlds/
 │   └── airacer.wbt              # 主世界文件
-└── protos/
-    ├── RaceCar.proto            # 赛车模型（含双目摄像头节点）
-    ├── TrafficCone.proto        # 锥桶（颜色通过参数配置，用于红色/橙色）
-    ├── Barrier.proto            # 黄黑路障
-    └── Powerup.proto            # 加速包（蓝色扁圆柱 + 旋转光环）
+├── protos/
+│   ├── RaceCar.proto            # 赛车模型（含双目摄像头节点）
+│   ├── TrafficCone.proto        # 锥桶（颜色通过参数配置，用于红色/橙色）
+│   ├── Barrier.proto            # 黄黑路障
+│   └── Powerup.proto            # 加速包（蓝色扁圆柱 + 旋转光环）
+└── controllers/
+    ├── supervisor/
+    │   └── supervisor.py        # Supervisor 控制器（负责裁判逻辑 + 写入录制文件）
+    └── car/
+        ├── car_controller.py    # 车辆控制器框架（运行于 Webots 进程内）
+        └── sandbox_runner.py    # 学生代码沙箱执行器（作为独立子进程运行）
 ```
 
 ### 3.3 赛道几何规格
@@ -212,7 +222,7 @@ webots/
 | 水平视场角 | 60° |
 | 基线距离 | 0.12m |
 | 安装位置 | 车头前方0.10m，离地0.30m，光轴水平朝前，左右摄像头水平排列 |
-| 输出通道顺序 | Webots 默认输出 RGB，控制器框架（模块二）负责转换为 BGR 后传入学生代码 |
+| 输出通道顺序 | Webots 默认输出 RGB，车辆控制器框架负责转换为 BGR 后传入学生代码 |
 
 ### 3.6 障碍物规格
 
@@ -260,48 +270,18 @@ webots/
 
 4个检查点需均匀分布于全圈，不可集中在半圈以内。具体坐标由建模人员根据赛道实际几何确定后，以注释方式写入世界文件，供 Supervisor 读取。
 
-### 3.8 验收标准
-
-- [ ] Webots 可正常加载 `airacer.wbt`，物理仿真启动后无崩溃或异常
-- [ ] 车辆可通过 Webots `Driver` API 接受转向角和速度指令并产生对应物理运动
-- [ ] 双目摄像头节点可正常输出图像数据，可转换为 numpy ndarray
-- [ ] 在640×480分辨率摄像头图像中，所有车道标线和障碍物可见、无遮挡、无极端光照导致的不可见区域
-- [ ] 4个检查点坐标覆盖全圈，相邻检查点之间无法通过倒车绕过
-- [ ] 所有 Proto 节点可由 Supervisor 在运行时动态创建和删除，不引发世界文件状态损坏
-- [ ] 世界文件中包含不少于10个动态障碍候选坐标注释和不少于6个加速包候选坐标注释
-
----
-
-## 四、模块二：仿真控制器
-
-### 4.1 负责范围
-
-编写两类 Webots 控制器文件：
-1. **Supervisor 控制器**：拥有场景树特权访问权限，负责比赛裁判逻辑
-2. **车辆控制器框架**：在 Webots 进程内运行，负责加载并调用学生代码，处理超时和崩溃
-
-### 4.2 交付物
-
-```
-webots/controllers/
-├── supervisor/
-│   └── supervisor.py            # Supervisor 控制器
-└── car/
-    ├── car_controller.py        # 车辆控制器框架（运行于 Webots 进程内）
-    └── sandbox_runner.py        # 学生代码沙箱执行器（作为独立子进程运行）
-```
-
-### 4.3 Supervisor 控制器
+### 3.8 Supervisor 控制器
 
 **职责列表：**
-- 在比赛开始时读取 `race_config.json`，初始化参赛车辆列表、场次类型和规定圈数
+- 在比赛开始时读取 `race_config.json`，初始化参赛车辆列表、场次类型、规定圈数和录制路径
 - 维护每辆车的检查点通过序列，判断是否完成有效一圈及对应圈时
 - 按竞速赛制执行比赛结束逻辑（见下方"比赛结束流程"）
 - 通过 `TouchSensor` 或坐标距离检测碰撞事件，按碰撞规则执行处理
 - 检测车辆是否进入加速包碰撞区域，触发加速包拾取逻辑
 - 按照加速包生成规则动态创建和删除加速包节点
 - 按照动态障碍生成规则随机创建和删除障碍锥桶节点
-- 每仿真步（64ms）通过本地 TCP Socket 向后端推送状态数据
+- 每仿真步（64ms）将状态数据追加写入 `telemetry.jsonl`
+- 仿真结束后写入 `metadata.json`
 
 **比赛结束流程（竞速赛制）：**
 
@@ -313,50 +293,65 @@ webots/controllers/
         if not grace_period_started:
             grace_period_started = True
             grace_start_time = sim_time
-            向后端推送事件：{"type": "leader_finished", "team_id": ..., "finish_time": sim_time}
+            写入事件：{"type": "leader_finished", "team_id": ..., "finish_time": sim_time}
 
     if grace_period_started:
         if sim_time - grace_start_time >= 60.0:
-            向后端推送事件：{"type": "race_end", "sim_time": sim_time}
+            写入事件：{"type": "race_end", "sim_time": sim_time}
             停止所有车辆（Driver速度设为0），结束仿真步循环
 ```
 
 排位赛（session_type = "qualifying"）不执行上述流程，每辆车完成2圈后由车辆控制器停止该车。
 
-**推送数据格式（JSON，每64ms一条，`\n` 结尾，UTF-8编码，推送至 localhost:9100）：**
+**录制文件写入（telemetry.jsonl）：**
+
+每64ms追加写入一行 JSON，格式如下（每行一个完整 JSON 对象，以 `\n` 结尾）：
+
+```
+{"t":0.064,"cars":[{"team_id":"A01","x":12.4,"y":-3.1,"heading":1.57,"speed":8.3,"lap":0,"lap_progress":0.0,"status":"normal","boost_remaining":0.0}],"events":[]}
+```
+
+字段说明：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `t` | float | 当前仿真时间（秒） |
+| `cars` | array | 当前所有参赛车辆的状态快照 |
+| `cars[].team_id` | string | 队伍ID |
+| `cars[].x`, `cars[].y` | float | 车辆在世界坐标系中的位置（米） |
+| `cars[].heading` | float | 车头朝向（弧度，范围 [−π, π]） |
+| `cars[].speed` | float | 当前速度（m/s） |
+| `cars[].lap` | int | 已完成圈数 |
+| `cars[].lap_progress` | float | 当前圈进度（0.0~1.0） |
+| `cars[].status` | string | 车辆状态：`normal` / `boosted` / `penalized` / `disqualified` |
+| `cars[].boost_remaining` | float | 加速包剩余效果时间（秒），未激活时为 0.0 |
+| `events` | array | 本帧发生的事件列表（结构与原 IPC 事件相同）|
+
+**仿真结束后写入 metadata.json：**
 
 ```json
 {
-  "sim_time": 45.312,
-  "cars": [
-    {
-      "team_id": "A01",
-      "x": 12.4,
-      "y": -3.1,
-      "heading": 1.57,
-      "speed": 8.3,
-      "lap": 2,
-      "lap_progress": 0.73,
-      "status": "normal",
-      "boost_remaining": 0.0
-    }
-  ],
-  "events": [
-    {"type": "lap_complete",   "team_id": "A01", "lap_time": 43.21, "lap_number": 2},
-    {"type": "collision",      "team_id": "B02", "severity": "minor", "collision_with": "obstacle"},
-    {"type": "powerup_pick",   "team_id": "C03", "powerup_id": "p_04", "effect_duration": 2.0},
-    {"type": "obstacle_spawn", "obstacle_id": "dyn_07", "x": 5.1, "y": 2.3},
-    {"type": "timeout_warn",   "team_id": "D01", "warn_count": 2}
-  ]
+  "session_id": "group_race_G1",
+  "session_type": "group_race",
+  "total_laps": 3,
+  "recording_path": "D:/airacer/recordings/group_race_G1",
+  "recorded_at": "2026-04-10T15:30:21",
+  "duration_sim": 326.4,
+  "total_frames": 5100,
+  "teams": [{"team_id": "A01", "team_name": "队伍A"}],
+  "finish_reason": "race_end",
+  "final_rankings": [{"rank": 1, "team_id": "A01", "total_time": 321.4}]
 }
 ```
+
+`recording_path` 字段从 `race_config.json` 读取，`recorded_at` 为仿真结束时的系统本地时间（ISO 8601 格式），`total_frames` 为实际写入的 JSONL 行数。
 
 **碰撞判定规则：**
 
 | 级别 | 判定条件 | 处理操作 |
 |------|----------|----------|
-| 轻微碰撞 | 接触时相对速度 < 3m/s | 被碰车辆速度降至当前速度的70%，持续1秒；推送 `collision(severity=minor)` |
-| 严重碰撞 | 接触时相对速度 ≥ 3m/s | 被碰车辆停止运动2秒；推送 `collision(severity=major)` |
+| 轻微碰撞 | 接触时相对速度 < 3m/s | 被碰车辆速度降至当前速度的70%，持续1秒；写入事件 `collision(severity=minor)` |
+| 严重碰撞 | 接触时相对速度 ≥ 3m/s | 被碰车辆停止运动2秒；写入事件 `collision(severity=major)` |
 | 判负 | 同一场次同一队伍累计3次严重碰撞 | 该车标记为 `disqualified`，停止行驶至本场结束；不计入本场排名 |
 
 **加速包拾取规则：**
@@ -371,7 +366,7 @@ webots/controllers/
 - 在满足上述条件下经过 CP0 时，`lap` 计数+1，记录本圈用时，序列重置为等待 CP1
 - 跳过任意检查点或逆向通过时，当前圈序列不推进，不计圈
 
-### 4.4 车辆控制器框架（car_controller.py）
+### 3.9 车辆控制器框架（car_controller.py）
 
 **执行流程（每仿真步64ms）：**
 1. 从 Webots Camera 节点读取左右摄像头图像，转换为 BGR uint8 numpy array
@@ -383,71 +378,91 @@ webots/controllers/
 
 | 情况 | 处理方式 |
 |------|----------|
-| 单次调用超时（超过20ms未返回） | 沿用上一帧的 steering/speed 值；向 Supervisor 内部记录1次警告；`timeout_warn` 事件将在下一次 Supervisor 推送中包含 |
+| 单次调用超时（超过20ms未返回） | 沿用上一帧的 steering/speed 值；记录1次警告；`timeout_warn` 事件写入下一帧 JSONL |
 | 同一队伍累计3次警告 | 通知 Supervisor 执行 `lap_void`：重置该车至最近检查点，当前圈成绩取消 |
-| 子进程进程退出（stdout关闭或退出码非零）| 记录崩溃日志；自动重新启动沙箱子进程；期间该车停止运动2秒 |
-| 子进程触发非法系统调用（内核发送 SIGSYS）| 子进程终止后不重启；通知 Supervisor 将该车标记为 `disqualified` |
+| 子进程退出（stdout关闭或退出码非零）| 记录崩溃日志；自动重新启动沙箱子进程；期间该车停止运动2秒 |
+| 子进程触发非法 import（ImportError 被捕获）| 子进程终止后不重启；通知 Supervisor 将该车标记为 `disqualified` |
 
 **比赛配置读取：**
 控制器启动时读取 `race_config.json`（由后端在比赛开始前写入），获取本场参赛队伍列表及各队代码路径。
-
-### 4.5 沙箱执行器（sandbox_runner.py）
-
-作为独立子进程运行，每辆参赛车对应一个实例，在加载学生代码前施加以下资源限制：
-
-```python
-import resource, os
-
-def apply_sandbox_limits():
-    # 虚拟地址空间上限：512MB
-    resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
-    # CPU 时间累计上限：10秒（防止无限循环）
-    resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
-    # 禁止创建子进程
-    resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
-    # 禁止写文件（最大可写文件大小为0字节）
-    resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
-```
-
-网络命名空间隔离在父进程调用 `Popen` 时通过 `preexec_fn` 实现：
-
-```python
-proc = subprocess.Popen(
-    ["python3", "sandbox_runner.py", "--team-id", team_id, "--code-path", code_path],
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    preexec_fn=lambda: (os.unshare(0x40000000), apply_sandbox_limits())
-    # 0x40000000 = CLONE_NEWNET，创建独立网络命名空间
-)
-```
 
 **父子进程通信协议：**
 - 父进程 → 子进程（stdin）：每帧发送一个二进制消息，格式为 `[4字节小端整数：左图数据长度][左图BGR bytes][4字节小端整数：右图数据长度][右图BGR bytes][8字节double：timestamp]`
 - 子进程 → 父进程（stdout）：每帧返回一行 JSON 字符串，格式为 `{"steering": float, "speed": float}\n`
 
-### 4.6 验收标准
+**父进程启动沙箱子进程（Windows 版本）：**
 
+```python
+proc = subprocess.Popen(
+    ["python", "sandbox_runner.py", "--team-id", team_id, "--code-path", code_path],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    creationflags=subprocess.CREATE_NO_WINDOW
+)
+```
+
+注意：Windows 不支持 `preexec_fn`，网络和进程隔离通过沙箱内部的 import hook 实现（见3.10节）。
+
+### 3.10 沙箱执行器（sandbox_runner.py）
+
+作为独立子进程运行，每辆参赛车对应一个实例。在加载学生代码前，通过 Python import hook 阻断对危险模块的访问：
+
+```python
+BLOCKED_PREFIXES = frozenset([
+    'os', 'sys', 'socket', 'subprocess', 'multiprocessing',
+    'threading', 'time', 'datetime', 'io', 'builtins',
+    'ctypes', 'winreg', 'nt', '_winapi', 'pathlib',
+    'shutil', 'tempfile', 'glob', 'fnmatch',
+    'requests', 'urllib', 'http', 'ftplib', 'smtplib',
+    'signal', 'gc', 'inspect', 'importlib',
+])
+
+class SandboxImportHook(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        base = fullname.split('.')[0]
+        if base in BLOCKED_PREFIXES:
+            raise ImportError(f"[Sandbox] Module '{fullname}' is not allowed.")
+        return None
+
+sys.meta_path.insert(0, SandboxImportHook())
+```
+
+沙箱执行器在安装 hook 后，再执行 `importlib.util.spec_from_file_location` 加载学生代码文件。父进程若检测到子进程因 ImportError 退出，记录违规日志并通知 Supervisor 将该车标记为 `disqualified`，不重启子进程。
+
+**注意：** Windows 下无法使用 `resource.setrlimit`，内存和进程数量限制依赖 Windows Job Object（可选实现，P2优先级）。当前版本以 import hook 作为核心安全机制。
+
+### 3.11 验收标准
+
+**赛道建模部分：**
+- [ ] Webots 可正常加载 `airacer.wbt`，物理仿真启动后无崩溃或异常
+- [ ] 车辆可通过 Webots `Driver` API 接受转向角和速度指令并产生对应物理运动
+- [ ] 双目摄像头节点可正常输出图像数据，可转换为 numpy ndarray
+- [ ] 在640×480分辨率摄像头图像中，所有车道标线和障碍物可见、无遮挡、无极端光照导致的不可见区域
+- [ ] 4个检查点坐标覆盖全圈，相邻检查点之间无法通过倒车绕过
+- [ ] 所有 Proto 节点可由 Supervisor 在运行时动态创建和删除，不引发世界文件状态损坏
+- [ ] 世界文件中包含不少于10个动态障碍候选坐标注释和不少于6个加速包候选坐标注释
+
+**控制器与沙箱部分：**
 - [ ] Supervisor 计圈判定正确：检查点必须按序通过；倒车/跳过检查点时当前圈不计入
 - [ ] 碰撞三级判定规则全部可触发，处理动作与规则一致
 - [ ] 加速包拾取后效果持续2秒，5秒冷却期内对同一车辆不再触发
 - [ ] 动态障碍每30秒生成一次，同时存在数量不超过3个，生成位置不违反禁止区域规则
-- [ ] Supervisor 每64ms向后端推送一条状态JSON，实测消息延迟（从步长触发到socket写入完成）< 5ms
+- [ ] Supervisor 每64ms写入一行 telemetry JSONL，仿真结束后 metadata.json 写入完整
 - [ ] 车辆控制器单次调用超时（20ms）行为正确：沿用上帧值，记录警告
 - [ ] 累计3次警告后触发 `lap_void`，车辆正确重置
-- [ ] 沙箱子进程无法访问网络（可用 `nc` 测试连接局域网地址）
-- [ ] 沙箱子进程无法写入文件（`RLIMIT_FSIZE=0` 验证）
+- [ ] 沙箱子进程尝试 `import os` 等被阻断模块时抛出 ImportError，子进程被标记为违规
 - [ ] 子进程崩溃后车辆控制器自动重启，不影响同场其他车辆的正常运行
 
 ---
 
-## 五、模块三：赛事管理后端
+## 四、模块二：赛事管理后端
 
-### 5.1 负责范围
+### 4.1 负责范围
 
-后端服务的全部功能：接收 Supervisor 数据、维护比赛状态机、计算实时排名、向前端广播数据、提供代码提交的 HTTP API 和测试队列管理。
+后端服务的全部功能：读取和提供录制文件、维护比赛状态机、管理 Webots 进程生命周期、提供代码提交的 HTTP API、测试队列管理，以及向前端推送仿真状态。
 
-### 5.2 交付物
+### 4.2 交付物
 
 ```
 server/
@@ -455,19 +470,42 @@ server/
 ├── race/
 │   ├── state_machine.py         # 比赛状态机
 │   ├── session.py               # Webots 进程启动/停止管理
-│   ├── scoring.py               # 实时排名计算
-│   └── ipc.py                   # TCP Socket 接收 Supervisor 推送数据
+│   └── scoring.py               # 比赛排名计算（从录制文件提取）
 ├── api/
 │   ├── submission.py            # 代码提交与即时检查 API
 │   ├── testqueue.py             # 测试队列管理 API
-│   └── admin.py                 # 助教控制 API（需密码验证）
+│   ├── admin.py                 # 助教控制 API（需密码验证）
+│   └── recording.py             # 录制文件服务 API（新增）
 ├── ws/
-│   └── broadcaster.py           # WebSocket 广播管理
+│   └── admin.py                 # Admin WebSocket（推送仿真状态）
 └── db/
     └── models.py                # SQLite 数据模型
 ```
 
-### 5.3 REST API 接口定义
+### 4.3 录制文件服务 API
+
+**录制文件 REST API（无需鉴权，前端回放播放器使用）：**
+
+```
+GET /api/recordings/{session_id}/metadata
+  → 返回该场次的 metadata.json 内容（JSON 格式）
+
+GET /api/recordings/{session_id}/telemetry
+  → 流式返回 telemetry.jsonl 文件内容
+  → Content-Type: application/x-ndjson
+  → 逐行返回，每行为一个 JSON 对象
+
+GET /api/recordings
+  → 返回所有已完成录制的摘要列表
+  → 每条摘要包含：session_id, session_type, recorded_at, duration_sim, total_frames, teams, final_rankings
+```
+
+**说明：**
+- `GET /api/recordings/{session_id}/telemetry` 使用 StreamingResponse 返回，前端逐行解析 JSONL 构建帧数组
+- 录制文件存储路径来自 `race_config.json` 中的 `recording_path` 字段
+- 若录制文件尚未生成（仿真未结束），返回 HTTP 404
+
+### 4.4 REST API 接口定义
 
 **代码提交接口（学生使用，队伍ID + 密码鉴权）：**
 
@@ -525,6 +563,21 @@ Response 200：
 }
 ```
 
+**公开数据接口（无需鉴权）：**
+
+```
+GET /api/teams
+  → 返回队伍列表（team_id, team_name），不含密码等敏感信息
+
+GET /api/results
+  → 返回所有已完成场次的结果
+
+GET /api/schedule
+  → 返回赛程安排
+```
+
+### 4.5 助教 REST API
+
 **助教控制接口（需密码验证）：**
 
 ```
@@ -533,7 +586,7 @@ POST /api/admin/lock-submissions
 
 POST /api/admin/set-session
 Body: {"session_type": "qualifying|group_race|semi|final", "session_id": "G1", "team_ids": [...], "total_laps": 3}
-  → 配置下一场比赛的参数，写入 race_config.json
+  → 配置下一场比赛的参数，写入 race_config.json（含 recording_path 字段）
 
 POST /api/admin/start-race
   → 启动 Webots 进程，开始当前场比赛
@@ -555,84 +608,39 @@ Body: {"group_id": "G1", "team_ids": ["A01", "C03", "B05", "D02"]}
   → 助教手动修改某场分组赛的参赛队伍
 ```
 
-**公开数据接口（无需鉴权）：**
+### 4.6 Admin WebSocket
 
-```
-GET /api/teams
-  → 返回队伍列表（team_id, team_name），不含密码等敏感信息
+**监听地址：** `ws://0.0.0.0:8000/ws/admin`
 
-GET /api/results
-  → 返回所有已完成场次的结果
-
-GET /api/schedule
-  → 返回赛程安排
-```
-
-### 5.4 WebSocket 接口
-
-**监听地址：** `ws://0.0.0.0:8000/ws/race`
-
-**推送触发机制：**
-- 常规推送：独立定时器，约30Hz
-- 即时推送：收到以下事件时立即推送，不等待下一个30Hz周期：`lap_complete`、`collision`、`powerup_pick`、`race_start`、`race_end`
+此 WebSocket 仅供助教控制台使用，推送仿真运行状态（不推送逐帧遥测数据，遥测数据通过录制文件服务获取）。
 
 **推送数据格式：**
 
 ```json
 {
-  "type": "race_state",
-  "session_id": "group_race_3",
-  "session_type": "group_race",
-  "phase": "running",
-  "sim_time": 45.312,
-  "cars": [
-    {
-      "team_id": "A01",
-      "team_name": "队伍A",
-      "x": 12.4,
-      "y": -3.1,
-      "heading": 1.57,
-      "speed": 8.3,
-      "lap": 2,
-      "lap_progress": 0.73,
-      "status": "normal",
-      "boosted": false
-    }
-  ],
-  "rankings": [
-    {
-      "rank": 1,
-      "team_id": "A01",
-      "team_name": "队伍A",
-      "lap": 2,
-      "total_time": 88.4,
-      "gap_to_leader": 0.0
-    }
-  ],
-  "events": [
-    {
-      "type": "lap_complete",
-      "team_id": "A01",
-      "lap_time": 43.21,
-      "lap_number": 2
-    }
-  ]
+  "type": "sim_status",
+  "state": "running",
+  "session_id": "group_race_G1",
+  "webots_pid": 12345,
+  "sim_time_approx": 45.3,
+  "recording_path": "D:/airacer/recordings/group_race_G1"
 }
 ```
 
-**`phase` 字段取值范围：**
+**`state` 字段取值：**
 
 | 取值 | 含义 |
 |------|------|
-| `"waiting"` | 本场已配置，等待助教执行开始指令 |
-| `"running"` | 比赛进行中 |
-| `"finished"` | 比赛正常结束 |
-| `"aborted"` | 比赛被助教手动终止 |
+| `"idle"` | 无仿真运行，等待助教配置 |
+| `"running"` | Webots 进程运行中，仿真进行中 |
+| `"recording_ready"` | 仿真已结束，录制文件写入完成，可供回放 |
+| `"aborted"` | 仿真被强制终止，录制文件可能不完整 |
 
-**客户端连接后的初始化：**
-客户端连接 WebSocket 后，服务端立即推送一条包含当前完整状态的消息（与常规推送格式相同），用于前端初始化显示。
+**推送触发机制：**
+- 状态变化时立即推送（如从 `running` 变为 `recording_ready`）
+- 仿真运行中每10秒推送一次心跳（更新 `sim_time_approx`）
 
-### 5.5 比赛状态机
+### 4.7 比赛状态机
 
 状态机维护全局赛事状态，所有转换须由助教通过管理 API 主动触发，**禁止自动跳转**（唯一例外：Webots 进程自然结束时，状态从 `*_RUNNING` 自动转为 `*_FINISHED`）。
 
@@ -640,10 +648,10 @@ GET /api/schedule
 IDLE
   │ POST /api/admin/set-session + start-race
   ▼
-QUALIFYING_RUNNING   ── Webots 运行中，接收 Supervisor 数据
+QUALIFYING_RUNNING   ── Webots 运行中，写入录制文件
   │ Webots 进程退出 或 stop-race
   ▼
-QUALIFYING_FINISHED  ── 本批成绩写入数据库
+QUALIFYING_FINISHED  ── 本批成绩从录制文件提取后写入数据库
   │ 所有批次完成后：POST /api/admin/finalize-qualifying
   ▼
 QUALIFYING_DONE      ── 排位成绩排序完毕，分组赛对阵计算完毕
@@ -671,18 +679,18 @@ CLOSED               ── 所有结果已持久化，前端展示最终排名
 - 非合法顺序的状态跳转请求（如从 `QUALIFYING_RUNNING` 直接跳至 `FINAL_RUNNING`）返回 HTTP 400
 - 所有 `*_RUNNING` 状态下，测试队列暂停消费，比赛结束后自动恢复
 
-### 5.6 测试队列
+### 4.8 测试队列
 
 - 代码通过提交检查后自动加入 FIFO 队列尾部
 - 队列为单线程串行消费，同一时刻最多运行一个测试 Webots 实例
 - 若同一队伍在队列中已存在一条**尚未开始执行**的任务，新提交入队时替换旧任务
 - 若旧任务已开始执行，则不中断，新提交作为新条目追加到队列尾部
 - 所有 `*_RUNNING` 状态下暂停消费，`*_FINISHED` 或 `IDLE` 状态下自动恢复
-- 每次测试：启动单车 Webots 实例 → 运行至完成2圈或超过5分钟 → 关闭 Webots → 写入测试报告
+- 每次测试：启动单车 Webots 实例 → 运行至完成2圈或超过5分钟 → 关闭 Webots → 读取录制文件提取测试指标 → 写入测试报告
 - 测试报告字段：`laps_completed`, `best_lap_time`, `collisions_minor`, `collisions_major`, `timeout_warnings`, `finish_reason`
 - 测试报告仅该队伍通过鉴权访问，其他队伍无法查询
 
-### 5.7 数据库表结构
+### 4.9 数据库表结构
 
 ```sql
 -- 队伍信息
@@ -697,7 +705,7 @@ teams (
 submissions (
     id          TEXT PRIMARY KEY,  -- 时间戳字符串，如 "20260410_153021"
     team_id     TEXT NOT NULL,
-    code_path   TEXT NOT NULL,     -- 文件系统存储路径
+    code_path   TEXT NOT NULL,     -- 文件系统存储路径（Windows 正斜杠）
     submitted_at TEXT NOT NULL,
     is_active   INTEGER NOT NULL DEFAULT 1  -- 0: 被后续版本替代; 1: 当前有效版本
 )
@@ -740,32 +748,36 @@ race_points (
 )
 ```
 
-### 5.8 验收标准
+### 4.10 验收标准
 
-- [ ] 所有 REST API 端点返回正确的 HTTP 状态码和响应体，包含必要的错误信息
-- [ ] WebSocket 客户端连接后立即收到完整当前状态；断线后可重新连接并恢复正常接收
+- [ ] `GET /api/recordings/{session_id}/metadata` 正确返回对应 metadata.json 内容
+- [ ] `GET /api/recordings/{session_id}/telemetry` 以 NDJSON 格式流式返回 telemetry.jsonl，Content-Type 为 `application/x-ndjson`
+- [ ] `GET /api/recordings` 返回所有已完成录制的摘要列表，字段完整
+- [ ] 所有其他 REST API 端点返回正确的 HTTP 状态码和响应体，包含必要的错误信息
+- [ ] Admin WebSocket 在仿真状态变化时立即推送，`state` 字段值与实际仿真状态一致
 - [ ] 状态机拒绝非法顺序跳转，返回 HTTP 400 并描述当前状态
-- [ ] 实时排名在每次收到 `lap_complete` 事件后更新，更新结果在下一次 WebSocket 推送中体现
 - [ ] 测试队列在比赛期间暂停，比赛结束后自动恢复消费，队列顺序严格遵循 FIFO（含替换规则）
+- [ ] 测试结束后从录制文件正确提取测试指标并写入测试报告
 - [ ] 代码锁定后提交接口返回 HTTP 403
-- [ ] Webots 进程意外退出（非助教主动停止）时，后端检测到退出码，将当前场次标记为 `aborted`，并通过 WebSocket 推送状态变更
+- [ ] Webots 进程意外退出时，后端检测到退出码，将当前场次标记为 `aborted`，Admin WebSocket 推送 state=aborted
 - [ ] 数据库在后端重启后仍保留所有历史比赛结果（使用 SQLite 持久化，非内存数据库）
 
 ---
 
-## 六、模块四：前端可视化
+## 五、模块三：前端与回放播放器
 
-### 6.1 负责范围
+### 5.1 负责范围
 
-三个独立页面，使用原生 HTML + CSS + JavaScript 实现，不依赖任何前端框架。所有动态数据通过 WebSocket 或 HTTP 轮询从后端获取。
+三个独立页面，使用原生 HTML + CSS + JavaScript 实现，不依赖任何前端框架。所有动态数据通过 WebSocket 或 HTTP 请求从后端获取。核心功能为录制回放播放器，替代原实时串流展示。
 
-### 6.2 交付物
+### 5.2 交付物
 
 ```
 frontend/
 ├── race/
-│   ├── index.html               # 大屏比赛页（目标显示设备：1920×1080 投影仪）
-│   ├── minimap.js               # 2D 小地图渲染模块（Canvas）
+│   ├── index.html               # 回放播放页（加载录制文件并播放）
+│   ├── replay.js                # 回放控制逻辑（帧管理、时间轴、速度控制）
+│   ├── minimap.js               # 2D 小地图渲染模块（Canvas 2D）
 │   └── leaderboard.js           # 排行榜与事件提示模块
 ├── submit/
 │   └── index.html               # 学生代码提交页
@@ -773,63 +785,55 @@ frontend/
     └── index.html               # 助教控制台
 ```
 
-### 6.3 大屏比赛页（/race/index.html）
+### 5.3 回放播放页（/race/）
 
-该页面用于在比赛现场投屏，须在 1920×1080 分辨率下各区块均可见、无内容溢出或遮挡。
+该页面用于在比赛结束后播放录制文件，可通过 URL 参数指定 session_id。
 
-**布局结构（参考，实现时可调整比例）：**
+**核心流程：**
+1. 读取 URL 参数获取 `session_id`（如 `?session=group_race_G1`）
+2. `GET /api/recordings/{session_id}/metadata` → 获取队伍信息、总时长、最终排名
+3. `GET /api/recordings/{session_id}/telemetry` → 逐行解析 JSONL，构建帧数组（每行一帧）
+4. 数据加载完成后展示时间轴 slider，允许跳转到任意时刻
+5. 播放时使用 `requestAnimationFrame`，根据播放速度和经过的实际时间计算目标帧，通过二分查找 `t` 字段定位对应帧
+6. 渲染 Canvas 2D 小地图：赛道轮廓为静态背景层，车辆位置/heading 为动态层
+7. 同步更新排行榜和事件提示
 
-```
-┌───────────────────────────────────────────────────────────┐
-│  场次名称: 分组赛 第3场      仿真时间: 02:34.51    [LIVE]  │  ← 顶部信息栏
-├──────────────────────────────┬────────────────────────────┤
-│                              │  排名  队伍名   圈数  用时  │
-│    Webots 3D 串流             │   1    队伍A     2   88.4s │
-│    (iframe, port 1234)       │   2    队伍C     2   89.1s │
-│                              │   3    队伍B     1   45.2s │
-│                              │   4    队伍D     1   46.8s │
-├──────────────────────────────┼────────────────────────────┤
-│  2D 小地图（Canvas）           │  车辆状态列表               │
-│  赛道轮廓 + 实时车辆位置       │  A01  8.3m/s  圈2  正常    │
-│  + 障碍物 + 加速包位置         │  C03  7.9m/s  圈2  正常    │
-│                              │  B05  6.1m/s  圈1  已判负  │
-├──────────────────────────────┴────────────────────────────┤
-│  事件记录（滚动显示最近事件）                               │
-│  [02:34] 队伍C 拾取加速包    [02:31] 队伍B 严重碰撞 (2/3)  │
-└───────────────────────────────────────────────────────────┘
-```
+**播放控制：**
+- 播放/暂停按钮
+- 时间轴 slider（拖动可跳转到指定时刻）
+- 播放速度选择：1×、2×、4×
+- 当前时间显示（格式：`MM:SS.ss`）/ 总时长显示
 
 **2D 小地图实现要求：**
 - 赛道轮廓为预绘制的固定背景（SVG 或 Canvas 静态层），根据 Webots 世界文件的赛道几何绘制
-- 车辆位置来自 WebSocket 推送的 `(x, y, heading)` 字段，每次收到数据时更新
+- 车辆位置来自当前帧数据的 `(x, y, heading)` 字段，每帧渲染时更新
 - 每辆车以不同颜色实心圆点表示，附带指向 heading 方向的箭头指示行驶方向
-- 显示当前所有动态障碍物和加速包的位置（来自 WebSocket events 数据）
-- 小地图数据更新间隔由 WebSocket 推送频率决定（约30Hz）
+- 当前帧中的 `events` 字段若包含障碍物生成/删除事件，更新小地图上的障碍物显示
 
-**排行榜更新规则：**
-- 每次收到 WebSocket 推送时更新排行榜显示
-- 排名变化时，对应行需有明显的位置变化动效（CSS transition 即可，非必须）
+**布局结构（参考）：**
 
-**事件提示行为：**
+```
+┌───────────────────────────────────────────────────────────┐
+│  场次名称: 分组赛 第1场      播放时间: 02:34.51  [REPLAY]  │  ← 顶部信息栏
+├────────────────────────────┬──────────────────────────────┤
+│                            │  排名  队伍名   圈数  用时    │
+│  2D 小地图（Canvas）        │   1    队伍A     3   321.4s  │
+│  赛道轮廓 + 车辆位置         │   2    队伍C     3   328.7s  │
+│  + 障碍物位置               │   3    队伍B     2   186.3s  │
+│                            │                              │
+├────────────────────────────┴──────────────────────────────┤
+│  ▶  [==================●==============]  02:34 / 05:26  │  ← 时间轴
+│     1×  2×  4×                                           │
+├───────────────────────────────────────────────────────────┤
+│  事件记录（当前时刻附近事件）                                │
+│  [02:34] 队伍A 完成第3圈，圈速 107.3s                      │
+└───────────────────────────────────────────────────────────┘
+```
 
-| 事件类型 | 提示内容 | 显示时长 |
-|----------|----------|----------|
-| `collision(minor)` | "[队伍名] 轻微碰撞" | 显示2秒 |
-| `collision(major)` | "[队伍名] 严重碰撞 (N/3)" | 显示3秒 |
-| `collision(disqualified)` | "[队伍名] 累计3次严重碰撞，本场判负" | 显示5秒 |
-| `powerup_pick` | "[队伍名] 拾取加速包，速度+30%，持续2秒" | 显示2秒 |
-| `lap_complete` | "[队伍名] 完成第N圈，圈速 X.XXs" | 显示3秒 |
-| `race_end` | "本场比赛结束，最终排名: [队伍名1], [队伍名2]..." | 显示10秒 |
+**最终排名展示：**
+回放结束（时间轴到达末尾）后，自动展示来自 `metadata.json` 的 `final_rankings` 数据。
 
-多个事件同时触发时，采用队列方式顺序显示，不同时堆叠。
-
-**技术要求：**
-- Webots 3D 串流嵌入方式：`<iframe src="http://localhost:1234">`
-- 所有动态数据通过 WebSocket `ws://localhost:8000/ws/race` 获取，不使用 HTTP 轮询
-- WebSocket 连接断开时，页面在3秒内自动重连（指数退避，最大重试间隔15秒）
-- 重连期间页面不清空当前数据，显示"连接中断，正在重连..."提示
-
-### 6.4 代码提交页（/submit/index.html）
+### 5.4 代码提交页（/submit/index.html）
 
 **功能列表：**
 1. 队伍 ID + 密码登录（局部状态，不需要 session/cookie，页面刷新后重新输入）
@@ -839,7 +843,7 @@ frontend/
    - 失败：显示失败阶段（语法检查/接口检查）和具体错误信息（包含行号）
 4. 轮询 `/api/test-status/{team_id}`（每5秒一次），展示当前测试状态：
    - 等待中：显示队列位置和预计等待条目数
-   - 运行中：显示"测试进行中"，提供跳转链接到测试观看页（`http://localhost:1234` 的 Webots 串流页）
+   - 运行中：显示"测试进行中"
    - 已完成：展示测试报告（完成圈数、最快圈时、碰撞次数、超时警告次数、结束原因）
 5. 历史提交记录列表：展示本队所有历史版本的提交时间、版本号和对应的测试结果摘要
 6. 代码提交入口锁定后：文件上传控件和提交按钮变为不可交互状态，并显示说明文字
@@ -848,7 +852,7 @@ frontend/
 - 提交页不展示其他队伍的任何信息（代码、测试结果、队伍名称等）
 - 鉴权失败时，所有接口返回 HTTP 401，页面仅显示登录表单
 
-### 6.5 助教控制台（/admin/index.html）
+### 5.5 助教控制台（/admin/index.html）
 
 通过页面内密码输入框鉴权，密码正确后显示控制台内容，密码通过 HTTP Basic Auth 方式传递给后端 `/api/admin/*` 接口。
 
@@ -861,16 +865,17 @@ frontend/
    - 设置本场总圈数
    - 确认后调用 `set-session`，页面显示当前配置内容
 4. **开始比赛** / **停止比赛** / **重置赛道** 按钮，每个操作前显示二次确认对话框
-5. 实时积分总表：展示所有队伍的排位赛成绩、各场分组赛积分、当前总积分，按总积分降序排列
-6. 测试队列视图：显示当前队列中的所有条目（队伍ID、提交版本、排队时间）及正在执行的测试；支持手动移除某条队列条目
+5. 仿真录制状态监控：连接 Admin WebSocket，实时显示当前仿真状态（`state` 字段）、录制文件路径和预估仿真时间；`recording_ready` 时显示"录制完成，可回放"并附带回放链接
+6. 实时积分总表：展示所有队伍的排位赛成绩、各场分组赛积分、当前总积分，按总积分降序排列
+7. 测试队列视图：显示当前队列中的所有条目（队伍ID、提交版本、排队时间）及正在执行的测试；支持手动移除某条队列条目
 
-### 6.6 验收标准
+### 5.6 验收标准
 
-- [ ] 大屏比赛页在 1920×1080 分辨率的 Chrome 浏览器中，所有区块内容可见且不重叠、不溢出
-- [ ] Webots 3D 串流 iframe 正常加载并显示仿真画面
-- [ ] 小地图车辆位置从 WebSocket 收到数据到渲染完成的延迟 < 50ms
-- [ ] WebSocket 断线后在3秒内开始重连，重连成功后数据恢复正常推送
-- [ ] 多个事件同时到达时，事件提示按队列顺序显示，不同时重叠
+- [ ] 回放播放页可通过 URL 参数加载指定场次的录制文件，数据加载完成后时间轴可正常操作
+- [ ] 播放/暂停、速度切换（1×/2×/4×）、时间轴拖动均正常工作，帧渲染无明显跳帧或卡顿
+- [ ] 小地图车辆位置与帧数据中的 `(x, y, heading)` 一致，不同队伍颜色区分明确
+- [ ] 回放结束时正确展示 `metadata.json` 中的最终排名
+- [ ] 助教控制台的 Admin WebSocket 状态监控正常更新，`recording_ready` 时正确显示回放链接
 - [ ] 代码提交页：上传 `.py` 文件后，在2秒内展示后端返回的检查结果
 - [ ] 代码提交页：测试报告数据正确展示（与后端 `/api/test-status` 返回一致）
 - [ ] 代码提交页：锁定后提交控件不可用，历史记录仍可查看
@@ -879,120 +884,170 @@ frontend/
 
 ---
 
-## 七、模块间接口约定
+## 六、模块间接口约定
 
 各模块独立开发时必须遵守以下接口规范，以保证集成时不需要修改对接代码。
 
-### 接口①：Supervisor → 后端（TCP Socket）
+### 接口①：录制文件（模块一输出 → 模块二读取）
 
-- 连接方式：Supervisor 作为 TCP 客户端，连接 `127.0.0.1:9100`（后端监听）
-- 数据格式：每条消息为 UTF-8 编码的 JSON 字符串，以 `\n` 结尾
-- 推送频率：每仿真步一条（步长64ms，约15条/秒）
-- 字段定义：见第四章"推送数据格式"
+模块一（Supervisor）在仿真过程中向 `recording_path` 目录持续写入 `telemetry.jsonl`，仿真结束后写入 `metadata.json`。模块二通过文件系统直接读取，通过 REST API 提供给模块三。
 
-### 接口②：后端 → 前端（WebSocket）
-
-- 监听地址：`ws://0.0.0.0:8000/ws/race`
-- 数据格式：JSON 文本帧
-- 推送频率：约30Hz 常规推送 + 即时事件推送
-- 字段定义：见第五章"WebSocket 接口"
-
-### 接口③：后端启动 Webots（subprocess）
-
-后端通过 `subprocess.Popen` 启动 Webots 进程，命令行格式：
-
-```bash
-# 正式比赛（含3D串流，供前端嵌入）
-webots --stream="port=1234" /path/to/airacer.wbt
-
-# 单车测试（不需要对外串流时，可关闭渲染以节省资源）
-webots --minimize --no-rendering /path/to/airacer.wbt
+**文件结构：**
+```
+D:/airacer/recordings/{session_id}/
+├── telemetry.jsonl    # 仿真过程逐帧写入，每行一个 JSON 对象
+└── metadata.json      # 仿真结束后一次性写入
 ```
 
-Linux headless 环境下需配合虚拟显示运行：
-```bash
-Xvfb :99 -screen 0 1280x720x24 &
-DISPLAY=:99 webots --stream="port=1234" /path/to/airacer.wbt
+**telemetry.jsonl 单行格式：**
+```
+{"t":0.064,"cars":[{"team_id":"A01","x":12.4,"y":-3.1,"heading":1.57,"speed":8.3,"lap":0,"lap_progress":0.0,"status":"normal","boost_remaining":0.0}],"events":[]}
+```
+
+**metadata.json 格式：**
+```json
+{
+  "session_id": "group_race_G1",
+  "session_type": "group_race",
+  "total_laps": 3,
+  "recording_path": "D:/airacer/recordings/group_race_G1",
+  "recorded_at": "2026-04-10T15:30:21",
+  "duration_sim": 326.4,
+  "total_frames": 5100,
+  "teams": [{"team_id": "A01", "team_name": "队伍A"}],
+  "finish_reason": "race_end",
+  "final_rankings": [{"rank": 1, "team_id": "A01", "total_time": 321.4}]
+}
+```
+
+### 接口②：录制文件服务 API（模块二 → 模块三）
+
+```
+GET /api/recordings/{session_id}/metadata   → 返回 metadata.json 内容
+GET /api/recordings/{session_id}/telemetry  → 流式返回 telemetry.jsonl（Content-Type: application/x-ndjson）
+GET /api/recordings                         → 返回所有已完成录制的摘要列表
+```
+
+详细字段定义见第四章 4.3 节。
+
+### 接口③：Admin WebSocket（模块二 → 模块三）
+
+- 监听地址：`ws://0.0.0.0:8000/ws/admin`
+- 推送格式：
+
+```json
+{
+  "type": "sim_status",
+  "state": "running",
+  "session_id": "group_race_G1",
+  "webots_pid": 12345,
+  "sim_time_approx": 45.3,
+  "recording_path": "D:/airacer/recordings/group_race_G1"
+}
+```
+
+`state` 取值：`idle` / `running` / `recording_ready` / `aborted`
+
+### 接口④：后端启动 Webots（模块二 → 模块一，Windows 命令）
+
+后端通过 `subprocess.Popen` 在 Windows 11 上启动 Webots 进程：
+
+```python
+# 正式比赛
+proc = subprocess.Popen(
+    [
+        r"C:\Program Files\Webots\msys64\mingw64\bin\webots.exe",
+        # 注意：实际路径取决于 Webots 安装位置，建议通过环境变量或配置文件指定
+        "D:/airacer/webots/worlds/airacer.wbt"
+    ],
+    creationflags=subprocess.CREATE_NO_WINDOW
+)
+
+# 单车测试（不需要 3D 串流时，关闭渲染以节省资源）
+proc = subprocess.Popen(
+    [
+        r"C:\Program Files\Webots\msys64\mingw64\bin\webots.exe",
+        "--minimize",
+        "--no-rendering",
+        "D:/airacer/webots/worlds/airacer.wbt"
+    ],
+    creationflags=subprocess.CREATE_NO_WINDOW
+)
 ```
 
 后端须监控 Webots 子进程状态，进程退出时记录退出码并触发状态机转换。
 
-### 接口④：后端 → 控制器（比赛配置文件）
+### 接口⑤：比赛配置文件 race_config.json（模块二 → 模块一）
 
-每场比赛开始（`start-race`）前，后端写入以下配置文件，Supervisor 和车辆控制器在启动时读取：
+每场比赛开始（`start-race`）前，后端写入以下配置文件，Supervisor 和车辆控制器在启动时读取。v1.4 新增 `recording_path` 字段（去除原 `ipc_port` 字段）：
 
 ```json
 {
   "session_id": "group_race_G3",
   "session_type": "group_race",
   "total_laps": 3,
-  "ipc_port": 9100,
+  "recording_path": "D:/airacer/recordings/group_race_G3",
   "cars": [
     {
       "car_node_id": "car_1",
       "team_id": "A01",
       "team_name": "队伍A",
-      "code_path": "/submissions/A01/20260410_153021/team_controller.py",
+      "code_path": "D:/airacer/submissions/A01/20260410_153021/team_controller.py",
       "start_position": 1
-    },
-    {
-      "car_node_id": "car_2",
-      "team_id": "C03",
-      "team_name": "队伍C",
-      "code_path": "/submissions/C03/20260410_162845/team_controller.py",
-      "start_position": 2
     }
   ]
 }
 ```
 
-配置文件路径固定为 `/path/to/airacer/race_config.json`，控制器使用相对路径或环境变量定位。
+配置文件路径固定为 `D:/airacer/race_config.json`（或由环境变量 `AIRACER_CONFIG_PATH` 指定），路径分隔符使用正斜杠（Python Windows 兼容）。
 
 ---
 
-## 八、开发优先级与注意事项
+## 七、开发优先级与注意事项
 
-### 8.1 开发优先级
+### 7.1 开发优先级
 
 **P0（平台基本可运行所必须完成的功能）：**
 
 - 赛道建模 + 车辆模型（模块一）
-- Supervisor 计圈逻辑 + IPC 推送（模块二）
-- 车辆控制器框架 + 沙箱子进程（模块二）
-- 后端 IPC 接收 + WebSocket 广播（模块三）
-- 后端状态机基础流转（非全部状态，能运行单场即可）（模块三）
-- 大屏比赛页（Webots 串流 + 小地图 + 排行榜）（模块四）
+- Supervisor 计圈逻辑 + 录制文件写入（模块一）
+- 车辆控制器框架 + 沙箱子进程（模块一）
+- 后端录制文件服务 API（模块二）
+- 后端状态机基础流转（非全部状态，能运行单场即可）（模块二）
+- 前端回放播放页（小地图 + 排行榜 + 时间轴）（模块三）
 
 **P1（比赛完整流程所需功能）：**
-- 动态障碍 + 加速包生成逻辑（模块二）
-- 后端完整状态机（所有阶段）（模块三）
-- 代码提交 API + 即时检查（模块三）
-- 测试队列系统（模块三）
-- 学生代码提交页（模块四）
-- 助教控制台（模块四）
+- 动态障碍 + 加速包生成逻辑（模块一）
+- 后端完整状态机（所有阶段）（模块二）
+- 代码提交 API + 即时检查（模块二）
+- 测试队列系统（模块二）
+- 学生代码提交页（模块三）
+- 助教控制台（含录制状态监控）（模块三）
 
 **P2（可选功能，在 P1 完成后有余力时实现）：**
-- 测试过程录像保存与回放
+- Windows Job Object 实现沙箱内存限制
 - 比赛全程数据导出（JSON 格式）
 - 助教控制台中的积分历史图表展示
 
-### 8.2 端到端联调建议
+### 7.2 端到端联调建议
 
-建议各模块完成 P0 后，尽早进行一次端到端联调：
-1. 模块一：Webots 世界文件可正常加载，车辆可移动
-2. 模块二：使用官方模板代码作为测试输入，Supervisor 开始推送 IPC 数据
-3. 模块三：后端接收 IPC 数据并通过 WebSocket 广播
-4. 模块四：大屏页连接 WebSocket 并正常更新小地图和排行榜
+建议各模块完成 P0 后，尽早按以下顺序进行端到端联调：
 
-联调目标：确认四个模块的接口对接无误，数据格式一致，延迟在可接受范围内。
+1. **模块一联调**：使用官方模板代码（附录A）作为测试输入，跑一圈，确认 `telemetry.jsonl` 和 `metadata.json` 正确生成，文件格式符合接口①规范
+2. **模块二联调**：启动后端服务，调用 `GET /api/recordings/{session_id}/telemetry`，确认可正确流式返回步骤1生成的 JSONL 文件，每行格式合法
+3. **模块三联调**：打开回放播放页，加载步骤1生成的录制，确认时间轴正常、小地图车辆位置与 JSONL 数据一致、排行榜与 metadata.json 最终排名一致
+4. **完整联调**：助教控制台触发比赛开始 → Webots 仿真运行 → 录制文件生成 → Admin WebSocket 推送 `recording_ready` → 控制台显示回放链接 → 回放播放页正常播放
 
-### 8.3 已知注意事项
+### 7.3 已知注意事项（Windows 版本）
 
 - Webots 的 Camera 节点默认输出 RGB 通道顺序，车辆控制器框架在传入学生代码前须转换为 BGR（`image = image[:, :, ::-1]` 或 `cv2.cvtColor`）
-- Webots 仿真时间与墙钟时间不严格一致，`sim_time` 字段可能快于或慢于真实时间，前端显示时间时须使用 `sim_time` 而非 JavaScript 的 `Date.now()`
-- WebSocket 端点与前端 iframe 嵌入 Webots 串流存在跨域场景，后端须在 FastAPI 中正确配置 CORS（允许局域网内任意来源）
-- 沙箱子进程中需预装 `numpy` 和 `opencv-python`，联调前须确认运行环境中已安装
-- Linux headless 模式下 Webots 依赖虚拟显示（Xvfb），需提前安装并在启动脚本中配置 `DISPLAY` 环境变量
+- Webots 仿真时间与墙钟时间不严格一致，`t` 字段（仿真时间）可能快于或慢于真实时间，前端回放播放器须使用帧的 `t` 字段驱动时间轴，不可使用 JavaScript 的 `Date.now()`
+- Windows 下不支持 `resource.setrlimit` 和 `preexec_fn`，沙箱以 import hook 为核心安全机制，`CREATE_NO_WINDOW` flag 防止子进程弹出控制台窗口
+- Webots 可执行文件路径取决于安装位置，建议通过环境变量 `WEBOTS_PATH` 或配置文件指定，不要在代码中硬编码
+- 录制文件路径使用正斜杠（`D:/airacer/recordings/...`），Python 在 Windows 下可正确识别，避免反斜杠转义问题
+- WebSocket 端点存在跨域场景，后端须在 FastAPI 中正确配置 CORS（允许局域网内任意来源）
+- 沙箱子进程中需预装 `numpy` 和 `opencv-python`，联调前须确认 Python 环境中已安装
+- `telemetry.jsonl` 在仿真过程中持续追加写入，后端读取时需等待 `metadata.json` 生成后再提供回放服务，以确保文件写入已完成
 
 ---
 
@@ -1032,16 +1087,15 @@ def control(left_img: np.ndarray,
 `numpy`, `cv2`（OpenCV）, `math`, `collections`, `heapq`, `functools`, `itertools`
 
 **禁止 import 的模块：**
-`os`, `sys`, `socket`, `subprocess`, `threading`, `multiprocessing`, `time`, `datetime`，及所有网络请求相关库
+`os`, `sys`, `socket`, `subprocess`, `threading`, `multiprocessing`, `time`, `datetime`，及所有网络请求相关库（`requests`, `urllib`, `http` 等）
 
 ---
 
 ## 附录B：参考文档
 
-- 完整架构设计文档：`docs/airacer-architecture.md`（第十一节为数据字典，定义所有枚举值和计算字段）
+- 完整架构设计文档：`docs/airacer-architecture.md`（第三节为接口数据字典，定义所有枚举值、录制文件格式和计算字段）
 - Webots 官方参考手册：https://cyberbotics.com/doc/reference/index
 - Webots Python API 文档：https://cyberbotics.com/doc/reference/python-api
 - Webots Web Streaming 文档：https://cyberbotics.com/doc/guide/web-simulation
 
 ---
-

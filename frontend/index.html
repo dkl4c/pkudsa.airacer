@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Racer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 2rem;
+    }
+    h1 { font-size: 2.5rem; color: #58a6ff; letter-spacing: 0.04em; }
+    p  { color: #8b949e; font-size: 1rem; }
+    .cards {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 2rem 2.5rem;
+      text-align: center;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.2s, transform 0.2s;
+      min-width: 180px;
+    }
+    .card:hover {
+      border-color: #58a6ff;
+      transform: translateY(-3px);
+    }
+    .card-icon { font-size: 2.2rem; margin-bottom: 0.8rem; }
+    .card-title { font-size: 1.1rem; font-weight: 600; color: #e6edf3; }
+    .card-desc  { font-size: 0.85rem; color: #8b949e; margin-top: 0.3rem; }
+  </style>
+</head>
+<body>
+  <h1>AI Racer</h1>
+  <p>PKU 数据结构与算法 · 赛车大赛平台</p>
+  <div class="cards">
+    <a class="card" href="/submit/">
+      <div class="card-icon">📤</div>
+      <div class="card-title">提交代码</div>
+      <div class="card-desc">上传你的 AI 驾驶员</div>
+    </a>
+    <a class="card" href="/race/">
+      <div class="card-icon">🏁</div>
+      <div class="card-title">比赛回放</div>
+      <div class="card-desc">观看录制的比赛</div>
+    </a>
+    <a class="card" href="/admin/">
+      <div class="card-icon">⚙️</div>
+      <div class="card-title">管理后台</div>
+      <div class="card-desc">赛事控制面板</div>
+    </a>
+  </div>
+</body>
+</html>
