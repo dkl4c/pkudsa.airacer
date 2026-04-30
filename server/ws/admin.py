@@ -3,9 +3,9 @@ Admin WebSocket endpoint.
 
 ws://0.0.0.0:8000/ws/admin
 
-- On connect: immediately sends the last known sim_status message.
-- Broadcasts state changes: idle / running / recording_ready / aborted.
-- Heartbeat is driven externally by main.py's lifespan task.
+- On connect: immediately sends the current state for every zone.
+- Broadcasts state changes with zone_id so the frontend can filter.
+- Heartbeat is driven externally by app.py's lifespan task.
 - Incoming messages from clients are silently ignored (keep-alive only).
 """
 
@@ -16,24 +16,45 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter()
 
+_DEFAULT_ZONE_MSG = {
+    "type":            "sim_status",
+    "zone_id":         "default",
+    "state":           "idle",
+    "session_id":      None,
+    "webots_pid":      None,
+    "sim_time_approx": 0,
+    "recording_path":  None,
+}
+
 
 class AdminConnectionManager:
     def __init__(self) -> None:
         self.active: list[WebSocket] = []
-        self._last_msg: dict = {
-            "type":           "sim_status",
-            "state":          "idle",
-            "session_id":     None,
-            "webots_pid":     None,
-            "sim_time_approx": 0,
-            "recording_path": None,
-        }
+        # Per-zone last message cache; also keeps backward-compat _last_msg alias
+        self._last_msg_per_zone: dict[str, dict] = {}
+
+    @property
+    def _last_msg(self) -> dict:
+        """Backward-compat: return the 'default' zone last message."""
+        return self._last_msg_per_zone.get("default", dict(_DEFAULT_ZONE_MSG))
+
+    @_last_msg.setter
+    def _last_msg(self, value: dict) -> None:
+        zone_id = value.get("zone_id", "default")
+        self._last_msg_per_zone[zone_id] = value
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
         self.active.append(ws)
-        # Send current state immediately so the client is not blind on connect
-        await ws.send_json(self._last_msg)
+        # Send current state for every known zone so the client is not blind
+        if self._last_msg_per_zone:
+            for msg in self._last_msg_per_zone.values():
+                try:
+                    await ws.send_json(msg)
+                except Exception:
+                    break
+        else:
+            await ws.send_json(dict(_DEFAULT_ZONE_MSG))
 
     def disconnect(self, ws: WebSocket) -> None:
         try:
@@ -42,7 +63,8 @@ class AdminConnectionManager:
             pass
 
     async def broadcast(self, msg: dict) -> None:
-        self._last_msg = msg
+        zone_id = msg.get("zone_id", "default")
+        self._last_msg_per_zone[zone_id] = msg
         dead: list[WebSocket] = []
         for ws in list(self.active):
             try:
@@ -58,21 +80,23 @@ manager = AdminConnectionManager()
 
 
 async def broadcast_state(
-    state:            str,
-    session_id:       Optional[str]  = None,
-    webots_pid:       Optional[int]  = None,
-    sim_time_approx:  int            = 0,
-    recording_path:   Optional[str]  = None,
+    state:           str,
+    zone_id:         str           = "default",
+    session_id:      Optional[str] = None,
+    webots_pid:      Optional[int] = None,
+    sim_time_approx: int           = 0,
+    recording_path:  Optional[str] = None,
 ) -> None:
     """Convenience wrapper called by admin REST handlers and heartbeat loop."""
     await manager.broadcast(
         {
-            "type":           "sim_status",
-            "state":          state,
-            "session_id":     session_id,
-            "webots_pid":     webots_pid,
+            "type":            "sim_status",
+            "zone_id":         zone_id,
+            "state":           state,
+            "session_id":      session_id,
+            "webots_pid":      webots_pid,
             "sim_time_approx": sim_time_approx,
-            "recording_path": recording_path,
+            "recording_path":  recording_path,
         }
     )
 
@@ -86,8 +110,6 @@ async def ws_admin(websocket: WebSocket) -> None:
     await manager.connect(websocket)
     try:
         while True:
-            # We don't act on client messages, but we must receive to detect
-            # disconnects and to keep the connection alive.
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)

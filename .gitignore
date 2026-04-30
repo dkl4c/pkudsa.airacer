@@ -1,23 +1,34 @@
-# Local config (contains machine-specific paths, do not commit)
-server/config.py
-
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
 .venv/
 venv/
 
 # Database
-server/db/*.db
+*.db
+server/database/
+simnode/database/
+
+# Config files (contain passwords / machine-specific paths)
+server/config/config.yaml
+simnode/config/config.yaml
 
 # Runtime data (generated, not source)
 recordings/
 submissions/
 race_config.json
 
+# Logs
+*.log
+
 # OS
 .DS_Store
 Thumbs.db
 
-# tests
+# IDE
+.vscode/
+.idea/
+
+# Tests
 server/tests

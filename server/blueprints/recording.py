@@ -53,6 +53,7 @@ async def list_recordings():
         results.append({
             "session_id":     subdir.name,
             "session_type":   meta.get("session_type"),
+            "zone_id":        meta.get("zone_id"),
             "recorded_at":    meta.get("recorded_at") or meta.get("finished_at"),
             "finish_reason":  meta.get("finish_reason"),
             "teams":          meta.get("teams", []),

@@ -1,5 +1,7 @@
 """
 Thread-safe state machine for AI Racer competition phases.
+Supports per-zone independent state machines; the module-level
+`state_machine` is kept for backward compatibility (zone "default").
 """
 
 import threading
@@ -29,7 +31,6 @@ class RaceState(str, Enum):
 # The dict below lists non-IDLE legal targets from each source.
 _ALLOWED_NON_IDLE: dict[RaceState, set[RaceState]] = {
     RaceState.IDLE: {
-        # Allow direct jump to any *_RUNNING for testing
         RaceState.QUALIFYING_RUNNING,
         RaceState.GROUP_RACE_RUNNING,
         RaceState.SEMI_RUNNING,
@@ -41,14 +42,16 @@ _ALLOWED_NON_IDLE: dict[RaceState, set[RaceState]] = {
     },
     RaceState.QUALIFYING_FINISHED: {
         RaceState.QUALIFYING_DONE,
-        RaceState.QUALIFYING_RUNNING,   # next batch
+        RaceState.QUALIFYING_RUNNING,
     },
     RaceState.QUALIFYING_ABORTED: {
         RaceState.QUALIFYING_DONE,
-        RaceState.QUALIFYING_RUNNING,   # retry
+        RaceState.QUALIFYING_RUNNING,
     },
     RaceState.QUALIFYING_DONE: {
         RaceState.GROUP_RACE_RUNNING,
+        RaceState.SEMI_RUNNING,   # small zones may skip group_race
+        RaceState.FINAL_RUNNING,  # tiny zones go straight to final
     },
     RaceState.GROUP_RACE_RUNNING: {
         RaceState.GROUP_RACE_FINISHED,
@@ -56,11 +59,11 @@ _ALLOWED_NON_IDLE: dict[RaceState, set[RaceState]] = {
     },
     RaceState.GROUP_RACE_FINISHED: {
         RaceState.GROUP_DONE,
-        RaceState.GROUP_RACE_RUNNING,   # next match
+        RaceState.GROUP_RACE_RUNNING,
     },
     RaceState.GROUP_RACE_ABORTED: {
         RaceState.GROUP_DONE,
-        RaceState.GROUP_RACE_RUNNING,   # retry
+        RaceState.GROUP_RACE_RUNNING,
     },
     RaceState.GROUP_DONE: {
         RaceState.SEMI_RUNNING,
@@ -89,12 +92,10 @@ _ALLOWED_NON_IDLE: dict[RaceState, set[RaceState]] = {
     RaceState.CLOSED: set(),
 }
 
-# Merge IDLE as a legal target from every state
 ALLOWED: dict[RaceState, set[RaceState]] = {
     state: targets | {RaceState.IDLE}
     for state, targets in _ALLOWED_NON_IDLE.items()
 }
-
 
 _RUNNING_STATES = {
     RaceState.QUALIFYING_RUNNING,
@@ -115,11 +116,6 @@ class StateMachine:
             return self._state
 
     def transition(self, to: RaceState) -> None:
-        """
-        Move to a new state.
-
-        Raises ValueError if the transition is not legal from the current state.
-        """
         with self._lock:
             allowed = ALLOWED.get(self._state, {RaceState.IDLE})
             if to not in allowed:
@@ -130,15 +126,45 @@ class StateMachine:
             self._state = to
 
     def is_running(self) -> bool:
-        """Return True if the current state is any *_RUNNING state."""
         with self._lock:
             return self._state in _RUNNING_STATES
 
     def reset(self) -> None:
-        """Force state to IDLE (used by reset-track admin action)."""
         with self._lock:
             self._state = RaceState.IDLE
 
 
-# Module-level singleton
-state_machine = StateMachine()
+# ---------------------------------------------------------------------------
+# Per-zone registry
+# ---------------------------------------------------------------------------
+
+_zone_machines: dict[str, StateMachine] = {}
+_zone_registry_lock = threading.Lock()
+
+
+def get_zone_sm(zone_id: str) -> StateMachine:
+    """Return (creating if necessary) the StateMachine for zone_id."""
+    with _zone_registry_lock:
+        if zone_id not in _zone_machines:
+            _zone_machines[zone_id] = StateMachine()
+        return _zone_machines[zone_id]
+
+
+def all_running_zones() -> list[tuple[str, StateMachine]]:
+    """Return [(zone_id, sm), ...] for all zones currently in a running state."""
+    with _zone_registry_lock:
+        return [
+            (zid, sm)
+            for zid, sm in _zone_machines.items()
+            if sm.is_running()
+        ]
+
+
+def remove_zone_sm(zone_id: str) -> None:
+    """Remove the state machine for a deleted zone."""
+    with _zone_registry_lock:
+        _zone_machines.pop(zone_id, None)
+
+
+# Backward-compatible singleton (zone "default")
+state_machine = get_zone_sm("default")

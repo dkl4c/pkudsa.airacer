@@ -12,19 +12,30 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 _DDL = """
+CREATE TABLE IF NOT EXISTS zones (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    total_laps  INTEGER NOT NULL DEFAULT 3,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
 CREATE TABLE IF NOT EXISTS teams (
     id            TEXT PRIMARY KEY,
     name          TEXT NOT NULL,
     password_hash TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    zone_id       TEXT REFERENCES zones(id)
 );
 
 CREATE TABLE IF NOT EXISTS submissions (
-    id           TEXT PRIMARY KEY,
-    team_id      TEXT NOT NULL,
-    code_path    TEXT NOT NULL,
-    submitted_at TEXT NOT NULL,
-    is_active    INTEGER NOT NULL DEFAULT 1
+    id              TEXT PRIMARY KEY,
+    team_id         TEXT NOT NULL,
+    code_path       TEXT NOT NULL,
+    submitted_at    TEXT NOT NULL,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    slot_name       TEXT NOT NULL DEFAULT 'main',
+    is_race_active  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS test_runs (
@@ -50,7 +61,8 @@ CREATE TABLE IF NOT EXISTS race_sessions (
     started_at  TEXT,
     finished_at TEXT,
     phase       TEXT NOT NULL,
-    result      TEXT
+    result      TEXT,
+    zone_id     TEXT REFERENCES zones(id)
 );
 
 CREATE TABLE IF NOT EXISTS race_points (
@@ -62,13 +74,26 @@ CREATE TABLE IF NOT EXISTS race_points (
 );
 """
 
+_MIGRATIONS = [
+    # Idempotent ALTER TABLE statements for existing databases
+    "ALTER TABLE teams       ADD COLUMN zone_id        TEXT REFERENCES zones(id)",
+    "ALTER TABLE submissions ADD COLUMN slot_name       TEXT NOT NULL DEFAULT 'main'",
+    "ALTER TABLE submissions ADD COLUMN is_race_active  INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE race_sessions ADD COLUMN zone_id       TEXT REFERENCES zones(id)",
+]
+
 
 def init_db(db_path: str | Path) -> None:
-    """Create all tables if they do not yet exist."""
+    """Create all tables if they do not yet exist, and run idempotent migrations."""
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(db_path)) as conn:
         conn.executescript(_DDL)
+        for stmt in _MIGRATIONS:
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # column already exists
         conn.commit()
 
 

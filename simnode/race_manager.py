@@ -53,9 +53,17 @@ class RaceManager:
         ws_push_callback: Optional[Callable[[dict], None]] = None,
     ) -> str:
         """创建并启动一场比赛，返回 race_id。"""
+        max_concurrent = Config.get("MAX_CONCURRENT_RACES", 4)
         with self._lock:
             if race_id in self._races:
                 raise ValueError(f"race_id 已存在: {race_id}")
+            running_count = sum(
+                1 for r in self._races.values() if r.status == "running"
+            )
+            if running_count >= max_concurrent:
+                raise ValueError(
+                    f"已达到最大并发仿真数 ({max_concurrent})，请等待当前比赛结束"
+                )
 
         recordings_dir = Config.get("RECORDINGS_DIR", "./recordings")
         observer = TelemetryObserver(
