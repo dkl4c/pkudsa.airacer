@@ -21,6 +21,7 @@
     #login-screen {
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       background: linear-gradient(135deg, #1a1a2e 0%, #991b1b 50%, #dc2626 100%);
@@ -29,6 +30,9 @@
     #login-screen .card {
       width: 100%;
       max-width: 400px;
+      border: none;
+    }
+    #register-card {
       border: none;
     }
     #login-screen .card-header {
@@ -230,6 +234,69 @@
         <i class="bi bi-box-arrow-in-right me-1" id="login-icon"></i>
         <span id="login-btn-text">登录</span>
       </button>
+
+      <p class="text-center mt-3 mb-0" style="font-size:.85rem;color:#6b7280;">
+        没有账号？<a href="#" onclick="showRegisterForm();return false;" style="color:#dc2626;font-weight:600;">注册队伍</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- ── Register card (hidden by default) ── -->
+  <div class="card shadow-lg mt-3 d-none" id="register-card" style="width:100%;max-width:400px;">
+    <div class="card-header p-4" style="background:linear-gradient(135deg,#7f1d1d,#b91c1c);color:#fff;border-radius:var(--card-radius) var(--card-radius) 0 0;">
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <h2 class="mb-1" style="font-family:'Rajdhani',sans-serif;">注册队伍</h2>
+          <p class="mb-0 opacity-75" style="font-size:.875rem;">AI Racer — 创建新队伍</p>
+        </div>
+        <i class="bi bi-person-plus-fill section-icon opacity-75"></i>
+      </div>
+    </div>
+    <div class="card-body p-4">
+      <div id="reg-alert" class="alert alert-danger py-2 small d-none" role="alert">
+        <i class="bi bi-exclamation-circle me-1"></i><span id="reg-alert-text"></span>
+      </div>
+      <div id="reg-success" class="alert alert-success py-2 small d-none" role="alert">
+        <i class="bi bi-check-circle me-1"></i><span id="reg-success-text"></span>
+      </div>
+
+      <div class="mb-3">
+        <label for="reg-zone" class="form-label">赛区 <span class="text-danger">*</span></label>
+        <select class="form-select" id="reg-zone">
+          <option value="" disabled selected>请选择赛区</option>
+        </select>
+      </div>
+
+      <div class="mb-3">
+        <label for="reg-team-id" class="form-label">队伍 ID <span class="text-danger">*</span></label>
+        <input type="text" class="form-control" id="reg-team-id" placeholder="2-20位字母/数字/下划线，例如: A01" autocomplete="off">
+        <div class="form-text">登录时使用，创建后不可更改</div>
+      </div>
+
+      <div class="mb-3">
+        <label for="reg-team-name" class="form-label">队伍名称 <span class="text-danger">*</span></label>
+        <input type="text" class="form-control" id="reg-team-name" placeholder="展示用名称，例如: 极速先锋队" autocomplete="off">
+      </div>
+
+      <div class="mb-3">
+        <label for="reg-password" class="form-label">密码 <span class="text-danger">*</span></label>
+        <input type="password" class="form-control" id="reg-password" placeholder="设置登录密码" autocomplete="new-password">
+      </div>
+
+      <div class="mb-4">
+        <label for="reg-password2" class="form-label">确认密码 <span class="text-danger">*</span></label>
+        <input type="password" class="form-control" id="reg-password2" placeholder="再次输入密码" autocomplete="new-password">
+      </div>
+
+      <button class="btn btn-danger w-100 py-2" id="btn-register" onclick="handleRegister()">
+        <span class="spinner-border spinner-border-sm me-2 d-none" id="reg-spinner" role="status"></span>
+        <i class="bi bi-person-plus me-1" id="reg-icon"></i>
+        <span id="reg-btn-text">注册</span>
+      </button>
+
+      <p class="text-center mt-3 mb-0" style="font-size:.85rem;color:#6b7280;">
+        已有账号？<a href="#" onclick="showLoginForm();return false;" style="color:#dc2626;font-weight:600;">返回登录</a>
+      </p>
     </div>
   </div>
 </div>
@@ -550,6 +617,98 @@ document.getElementById('input-password').addEventListener('keydown', e => {
 document.getElementById('input-zone').addEventListener('keydown', e => {
   if (e.key === 'Enter') handleLogin();
 });
+
+// ── Register form toggle ───────────────────────────────────────────────────
+function showRegisterForm() {
+  document.getElementById('login-screen').querySelector('.card').classList.add('d-none');
+  const regCard = document.getElementById('register-card');
+  regCard.classList.remove('d-none');
+  // Sync zones to register select
+  const loginZone = document.getElementById('input-zone');
+  const regZone = document.getElementById('reg-zone');
+  regZone.innerHTML = loginZone.innerHTML;
+  regZone.value = '';
+  hideRegAlert();
+  document.getElementById('reg-success').classList.add('d-none');
+}
+
+function showLoginForm() {
+  document.getElementById('login-screen').querySelector('.card').classList.remove('d-none');
+  document.getElementById('register-card').classList.add('d-none');
+  hideLoginAlert();
+}
+
+function showRegAlert(msg) {
+  document.getElementById('reg-alert-text').textContent = msg;
+  document.getElementById('reg-alert').classList.remove('d-none');
+}
+function hideRegAlert() {
+  document.getElementById('reg-alert').classList.add('d-none');
+}
+
+function setRegLoading(loading) {
+  const btn     = document.getElementById('btn-register');
+  const spinner = document.getElementById('reg-spinner');
+  const icon    = document.getElementById('reg-icon');
+  const text    = document.getElementById('reg-btn-text');
+  btn.disabled  = loading;
+  spinner.classList.toggle('d-none', !loading);
+  icon.classList.toggle('d-none', loading);
+  text.textContent = loading ? '注册中...' : '注册';
+}
+
+async function handleRegister() {
+  hideRegAlert();
+  const zoneEl    = document.getElementById('reg-zone');
+  const zoneId    = zoneEl.value;
+  const teamId    = document.getElementById('reg-team-id').value.trim();
+  const teamName  = document.getElementById('reg-team-name').value.trim();
+  const password  = document.getElementById('reg-password').value;
+  const password2 = document.getElementById('reg-password2').value;
+
+  if (!zoneId)    { showRegAlert('请选择赛区'); return; }
+  if (!teamId)    { showRegAlert('请输入队伍 ID'); return; }
+  if (!/^[a-zA-Z0-9_]{2,20}$/.test(teamId)) {
+    showRegAlert('队伍 ID 只允许字母/数字/下划线，长度 2-20 位');
+    return;
+  }
+  if (!teamName)  { showRegAlert('请输入队伍名称'); return; }
+  if (!password)  { showRegAlert('请输入密码'); return; }
+  if (password !== password2) { showRegAlert('两次密码输入不一致'); return; }
+
+  setRegLoading(true);
+
+  let resp, data;
+  try {
+    resp = await fetch('/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone_id: zoneId, team_id: teamId, team_name: teamName, password })
+    });
+    data = await resp.json();
+  } catch (e) {
+    showRegAlert('网络错误: ' + e.message);
+    setRegLoading(false);
+    return;
+  }
+
+  setRegLoading(false);
+
+  if (resp.ok && data.status === 'registered') {
+    const successEl = document.getElementById('reg-success');
+    document.getElementById('reg-success-text').textContent = `注册成功！队伍 "${teamId}" 已创建，即将跳转登录…`;
+    successEl.classList.remove('d-none');
+    document.getElementById('btn-register').disabled = true;
+    setTimeout(() => {
+      showLoginForm();
+      document.getElementById('input-team-id').value = teamId;
+      document.getElementById('input-password').value = password;
+      document.getElementById('input-zone').value = zoneId;
+    }, 1500);
+  } else {
+    showRegAlert(data.detail || data.message || '注册失败');
+  }
+}
 
 // ══════════════════════════════════════════════════
 // MAIN PANEL
