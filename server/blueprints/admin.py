@@ -28,6 +28,7 @@ import datetime
 import json
 import pathlib
 import secrets
+import sqlite3
 from typing import Optional
 
 import httpx
@@ -36,7 +37,30 @@ from fastapi.responses import Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
-from server.config.config import ADMIN_PASSWORD, DB_PATH, RECORDINGS_DIR, SUBMISSIONS_DIR
+from server.config.config import (
+    ADMIN_PASSWORD,
+    DB_PATH,
+    RECORDINGS_DIR,
+    SUBMISSIONS_DIR,
+)
+from server.database.action import (
+    db_create_zone,
+    db_delete_zone,
+    db_ensure_default_zone,
+    db_get_running_session,
+    db_get_teams_with_code,
+    db_get_waiting_session,
+    db_get_zone,
+    db_get_zone_team_count,
+    db_get_zone_team_ids,
+    db_get_zone_standings,
+    db_get_zone_teams,
+    db_list_zones,
+    db_mark_session_aborted,
+    db_mark_session_finished,
+    db_mark_session_running,
+    db_upsert_session,
+)
 from server.database.models import get_db
 from server.race.bracket import compute_bracket
 from server.race.state_machine import (
@@ -45,12 +69,12 @@ from server.race.state_machine import (
     remove_zone_sm,
 )
 from server.utils.simnode_client import (
-    start_race as simnode_start_race,
-    cancel_race as simnode_cancel_race,
-    get_race_status as simnode_get_status,
-    get_race_result as simnode_get_result,
-    list_races as simnode_list_races,
     SIMNODE_URL as _SIMNODE_URL,
+    cancel_race as simnode_cancel_race,
+    get_race_result as simnode_get_result,
+    get_race_status as simnode_get_status,
+    list_races as simnode_list_races,
+    start_race as simnode_start_race,
 )
 
 router = APIRouter(prefix="/api/admin")
@@ -59,6 +83,7 @@ _security = HTTPBasic()
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
+
 
 def require_admin(credentials: HTTPBasicCredentials = Depends(_security)) -> None:
     ok = secrets.compare_digest(credentials.password.encode(), ADMIN_PASSWORD.encode())
@@ -70,41 +95,45 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(_security)) -> Non
 # Request models
 # ---------------------------------------------------------------------------
 
+
 class ZoneCreateBody(BaseModel):
-    id:          str
-    name:        str
+    id: str
+    name: str
     description: str = ""
-    total_laps:  int = 3
+    total_laps: int = 3
 
 
 class SetSessionBody(BaseModel):
     session_type: str
-    session_id:   str
-    team_ids:     list[str]
-    total_laps:   int
+    session_id: str
+    team_ids: list[str]
+    total_laps: int
 
 
 class ZoneSetSessionBody(BaseModel):
     session_type: str
-    session_id:   str
-    team_ids:     Optional[list[str]] = None  # if None, auto-select from zone
-    total_laps:   Optional[int] = None        # if None, use zone default
+    session_id: str
+    team_ids: Optional[list[str]] = None  # if None, auto-select from zone
+    total_laps: Optional[int] = None  # if None, use zone default
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _running_state_for(session_type: str) -> RaceState:
     mapping = {
-        "qualifying":  RaceState.QUALIFYING_RUNNING,
-        "group_race":  RaceState.GROUP_RACE_RUNNING,
-        "semi":        RaceState.SEMI_RUNNING,
-        "final":       RaceState.FINAL_RUNNING,
+        "qualifying": RaceState.QUALIFYING_RUNNING,
+        "group_race": RaceState.GROUP_RACE_RUNNING,
+        "semi": RaceState.SEMI_RUNNING,
+        "final": RaceState.FINAL_RUNNING,
     }
     state = mapping.get(session_type.lower())
     if state is None:
-        raise HTTPException(status_code=400, detail=f"Unknown session_type '{session_type}'")
+        raise HTTPException(
+            status_code=400, detail=f"Unknown session_type '{session_type}'"
+        )
     return state
 
 
@@ -112,8 +141,8 @@ def _finished_state_for(session_type: str) -> RaceState:
     return {
         "qualifying": RaceState.QUALIFYING_FINISHED,
         "group_race": RaceState.GROUP_RACE_FINISHED,
-        "semi":       RaceState.SEMI_FINISHED,
-        "final":      RaceState.FINAL_FINISHED,
+        "semi": RaceState.SEMI_FINISHED,
+        "final": RaceState.FINAL_FINISHED,
     }.get(session_type.lower(), RaceState.IDLE)
 
 
@@ -121,8 +150,8 @@ def _aborted_state_for(session_type: str) -> RaceState:
     return {
         "qualifying": RaceState.QUALIFYING_ABORTED,
         "group_race": RaceState.GROUP_RACE_ABORTED,
-        "semi":       RaceState.SEMI_ABORTED,
-        "final":      RaceState.IDLE,
+        "semi": RaceState.SEMI_ABORTED,
+        "final": RaceState.IDLE,
     }.get(session_type.lower(), RaceState.IDLE)
 
 
@@ -130,13 +159,43 @@ def _rank_to_points(rank: Optional[int]) -> int:
     return {1: 10, 2: 7, 3: 5, 4: 3}.get(rank, 1)
 
 
-async def _broadcast(state: str, zone_id: str = "default",
-                     session_id: Optional[str] = None,
-                     pid: Optional[int] = None,
-                     recording_path: Optional[str] = None):
+async def _broadcast(
+    state: str,
+    zone_id: str = "default",
+    session_id: Optional[str] = None,
+    pid: Optional[int] = None,
+    recording_path: Optional[str] = None,
+):
     from server.ws.admin import broadcast_state
-    await broadcast_state(state, zone_id=zone_id, session_id=session_id,
-                          webots_pid=pid, recording_path=recording_path)
+
+    await broadcast_state(
+        state,
+        zone_id=zone_id,
+        session_id=session_id,
+        webots_pid=pid,
+        recording_path=recording_path,
+    )
+
+
+def _build_cars(teams_data: list) -> list:
+    """Pure file I/O: read each team's code file and base64-encode it."""
+    template = (
+        pathlib.Path(__file__).resolve().parent.parent.parent / "sdk" / "team_controller.py"
+    )
+    cars = []
+    for idx, t in enumerate(teams_data):
+        code_path = t.get("code_path")
+        if code_path and pathlib.Path(code_path).exists():
+            code_b64 = base64.b64encode(pathlib.Path(code_path).read_bytes()).decode()
+        else:
+            code_b64 = base64.b64encode(template.read_bytes()).decode() if template.exists() else ""
+        cars.append({
+            "car_slot": f"car_{idx + 1}",
+            "team_id": t["id"],
+            "team_name": t["name"],
+            "code_b64": code_b64,
+        })
+    return cars
 
 
 # In-memory store: session_id → cars list (zone_id stored too)
@@ -155,24 +214,14 @@ def _get_running_session_id(zone_id: str) -> Optional[str]:
 # Zone CRUD
 # ---------------------------------------------------------------------------
 
+
 @router.get("/zones")
 async def list_zones(_auth=Depends(require_admin)):
-    from server.race.state_machine import get_zone_sm
     with get_db(DB_PATH) as conn:
-        rows = conn.execute("""
-            SELECT z.id, z.name, z.description, z.total_laps, z.created_at,
-                   COUNT(t.id) AS team_count
-            FROM zones z
-            LEFT JOIN teams t ON t.zone_id = z.id
-            GROUP BY z.id
-            ORDER BY z.created_at
-        """).fetchall()
-
+        rows = db_list_zones(conn)
     result = []
     for r in rows:
         sm = get_zone_sm(r["id"])
-        # Current running session
-        running_session = _zone_running_session.get(r["id"])
         result.append({
             "zone_id":         r["id"],
             "id":              r["id"],
@@ -182,7 +231,7 @@ async def list_zones(_auth=Depends(require_admin)):
             "created_at":      r["created_at"],
             "team_count":      r["team_count"],
             "state":           sm.state.value,
-            "running_session": running_session,
+            "running_session": _zone_running_session.get(r["id"]),
         })
     return result
 
@@ -190,17 +239,17 @@ async def list_zones(_auth=Depends(require_admin)):
 @router.post("/zones")
 async def create_zone(body: ZoneCreateBody, _auth=Depends(require_admin)):
     import re
-    if not re.match(r'^[a-zA-Z0-9_-]{2,32}$', body.id):
-        raise HTTPException(status_code=400, detail="Zone ID: 字母/数字/下划线/连字符，2-32字符")
-    now = datetime.datetime.now().isoformat()
-    with get_db(DB_PATH) as conn:
-        existing = conn.execute("SELECT id FROM zones WHERE id=?", (body.id,)).fetchone()
-        if existing:
-            raise HTTPException(status_code=409, detail=f"赛区ID已存在: {body.id}")
-        conn.execute(
-            "INSERT INTO zones (id, name, description, total_laps, created_at) VALUES (?,?,?,?,?)",
-            (body.id, body.name, body.description, body.total_laps, now),
+
+    if not re.match(r"^[a-zA-Z0-9_-]{2,32}$", body.id):
+        raise HTTPException(
+            status_code=400, detail="Zone ID: 字母/数字/下划线/连字符，2-32字符"
         )
+    now = datetime.datetime.now().isoformat()
+    try:
+        with get_db(DB_PATH) as conn:
+            db_create_zone(conn, body.id, body.name, body.description, body.total_laps, now)
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail=f"赛区ID已存在: {body.id}")
     return {"status": "created", "zone_id": body.id}
 
 
@@ -210,10 +259,8 @@ async def delete_zone(zone_id: str, _auth=Depends(require_admin)):
     if sm.is_running():
         raise HTTPException(status_code=409, detail="赛区有比赛正在进行，无法删除")
     with get_db(DB_PATH) as conn:
-        row = conn.execute("SELECT id FROM zones WHERE id=?", (zone_id,)).fetchone()
-        if row is None:
+        if not db_delete_zone(conn, zone_id):
             raise HTTPException(status_code=404, detail=f"赛区未找到: {zone_id}")
-        conn.execute("DELETE FROM zones WHERE id=?", (zone_id,))
     remove_zone_sm(zone_id)
     return {"status": "deleted", "zone_id": zone_id}
 
@@ -221,49 +268,19 @@ async def delete_zone(zone_id: str, _auth=Depends(require_admin)):
 @router.get("/zones/{zone_id}/teams")
 async def get_zone_teams(zone_id: str, _auth=Depends(require_admin)):
     with get_db(DB_PATH) as conn:
-        teams = conn.execute(
-            "SELECT id, name, created_at FROM teams WHERE zone_id=? ORDER BY name",
-            (zone_id,),
-        ).fetchall()
-        # For each team, show which slot is race-active
-        result = []
-        for t in teams:
-            active_sub = conn.execute(
-                """SELECT slot_name, submitted_at FROM submissions
-                   WHERE team_id=? AND is_race_active=1 LIMIT 1""",
-                (t["id"],),
-            ).fetchone()
-            result.append({
-                "id":                t["id"],
-                "name":              t["name"],
-                "created_at":        t["created_at"],
-                "active_slot":       active_sub["slot_name"] if active_sub else None,
-                "active_version":    active_sub["submitted_at"] if active_sub else None,
-            })
-    return result
+        return db_get_zone_teams(conn, zone_id)
 
 
 @router.get("/zones/{zone_id}/standings")
 async def get_zone_standings(zone_id: str, _auth=Depends(require_admin)):
     with get_db(DB_PATH) as conn:
-        rows = conn.execute("""
-            SELECT rp.team_id, t.name, SUM(rp.points) AS total_points
-            FROM race_points rp
-            JOIN teams t ON rp.team_id = t.id
-            JOIN race_sessions rs ON rp.session_id = rs.id
-            WHERE rs.zone_id = ?
-            GROUP BY rp.team_id
-            ORDER BY total_points DESC
-        """, (zone_id,)).fetchall()
-    return [dict(r) for r in rows]
+        return db_get_zone_standings(conn, zone_id)
 
 
 @router.get("/zones/{zone_id}/bracket")
 async def get_zone_bracket(zone_id: str, _auth=Depends(require_admin)):
     with get_db(DB_PATH) as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM teams WHERE zone_id=?", (zone_id,)
-        ).fetchone()[0]
+        count = db_get_zone_team_count(conn, zone_id)
     return compute_bracket(count)
 
 
@@ -271,88 +288,40 @@ async def get_zone_bracket(zone_id: str, _auth=Depends(require_admin)):
 # Zone-scoped race control
 # ---------------------------------------------------------------------------
 
+
 @router.post("/zones/{zone_id}/set-session")
 async def zone_set_session(
     zone_id: str,
     body: ZoneSetSessionBody,
     _auth=Depends(require_admin),
 ):
-    target_running = _running_state_for(body.session_type)
+    _running_state_for(body.session_type)  # validate early
 
     with get_db(DB_PATH) as conn:
-        zone_row = conn.execute(
-            "SELECT id, total_laps FROM zones WHERE id=?", (zone_id,)
-        ).fetchone()
-        if zone_row is None:
+        zone = db_get_zone(conn, zone_id)
+        if zone is None:
             raise HTTPException(status_code=404, detail=f"赛区未找到: {zone_id}")
 
-        total_laps = body.total_laps if body.total_laps is not None else zone_row["total_laps"]
+        total_laps = body.total_laps if body.total_laps is not None else zone["total_laps"]
+        team_ids = body.team_ids if body.team_ids is not None else db_get_zone_team_ids(conn, zone_id)
 
-        # Determine team_ids
-        if body.team_ids is not None:
-            team_ids = body.team_ids
-        else:
-            # Auto-select all teams in the zone for qualifying; for later stages, use standings
-            rows = conn.execute(
-                "SELECT id FROM teams WHERE zone_id=? ORDER BY name",
-                (zone_id,),
-            ).fetchall()
-            team_ids = [r["id"] for r in rows]
+        try:
+            teams_data = db_get_teams_with_code(conn, team_ids)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
 
-        # Build cars list
-        cars = []
-        for idx, team_id in enumerate(team_ids):
-            team_row = conn.execute(
-                "SELECT id, name FROM teams WHERE id=?", (team_id,)
-            ).fetchone()
-            if team_row is None:
-                raise HTTPException(status_code=404, detail=f"Team '{team_id}' not found")
+        db_upsert_session(conn, body.session_id, body.session_type, team_ids, total_laps, zone_id)
 
-            # Prefer race-active slot; fall back to main active slot
-            sub_row = conn.execute(
-                """SELECT code_path FROM submissions
-                   WHERE team_id=? AND is_race_active=1 AND is_active=1
-                   LIMIT 1""",
-                (team_id,),
-            ).fetchone()
-            if sub_row is None:
-                sub_row = conn.execute(
-                    """SELECT code_path FROM submissions
-                       WHERE team_id=? AND slot_name='main' AND is_active=1
-                       ORDER BY submitted_at DESC LIMIT 1""",
-                    (team_id,),
-                ).fetchone()
-
-            if sub_row and pathlib.Path(sub_row["code_path"]).exists():
-                code_bytes = pathlib.Path(sub_row["code_path"]).read_bytes()
-                code_b64 = base64.b64encode(code_bytes).decode()
-            else:
-                template = pathlib.Path(__file__).resolve().parent.parent.parent / "sdk" / "team_controller.py"
-                code_b64 = base64.b64encode(template.read_bytes()).decode() if template.exists() else ""
-
-            cars.append({
-                "car_slot":  f"car_{idx + 1}",
-                "team_id":   team_id,
-                "team_name": team_row["name"],
-                "code_b64":  code_b64,
-            })
-
-        # Persist session record
-        conn.execute(
-            """INSERT INTO race_sessions
-               (id, type, team_ids, total_laps, started_at, finished_at, phase, result, zone_id)
-               VALUES (?, ?, ?, ?, NULL, NULL, 'waiting', NULL, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                 type=excluded.type, team_ids=excluded.team_ids,
-                 total_laps=excluded.total_laps, phase='waiting',
-                 started_at=NULL, finished_at=NULL, result=NULL,
-                 zone_id=excluded.zone_id""",
-            (body.session_id, body.session_type, json.dumps(team_ids), total_laps, zone_id),
-        )
-
+    # File I/O outside DB transaction
+    cars = _build_cars(teams_data)
     _pending_cars[body.session_id] = cars
     _session_zone[body.session_id] = zone_id
-    return {"status": "ready", "session_id": body.session_id, "zone_id": zone_id, "cars_count": len(cars)}
+    return {
+        "status": "ready",
+        "session_id": body.session_id,
+        "zone_id": zone_id,
+        "cars_count": len(cars),
+    }
 
 
 @router.post("/zones/{zone_id}/start-race")
@@ -360,19 +329,17 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
     sm = get_zone_sm(zone_id)
 
     with get_db(DB_PATH) as conn:
-        row = conn.execute(
-            """SELECT id, type, total_laps FROM race_sessions
-               WHERE phase='waiting' AND zone_id=?
-               ORDER BY rowid DESC LIMIT 1""",
-            (zone_id,),
-        ).fetchone()
+        row = db_get_waiting_session(conn, zone_id)
 
     if row is None:
-        raise HTTPException(status_code=409, detail="该赛区没有 'waiting' 阶段的场次，请先调用 set-session")
+        raise HTTPException(
+            status_code=409,
+            detail="该赛区没有 'waiting' 阶段的场次，请先调用 set-session",
+        )
 
-    session_id   = row["id"]
+    session_id = row["id"]
     session_type = row["type"]
-    total_laps   = row["total_laps"]
+    total_laps = row["total_laps"]
     target_state = _running_state_for(session_type)
 
     try:
@@ -383,7 +350,9 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
     cars = _pending_cars.pop(session_id, [])
     if not cars:
         sm.reset()
-        raise HTTPException(status_code=409, detail="Car codes missing. Call set-session again.")
+        raise HTTPException(
+            status_code=409, detail="Car codes missing. Call set-session again."
+        )
 
     try:
         resp = await asyncio.to_thread(
@@ -395,27 +364,25 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
 
     now = datetime.datetime.now().isoformat()
     with get_db(DB_PATH) as conn:
-        conn.execute(
-            "UPDATE race_sessions SET phase='running', started_at=? WHERE id=?",
-            (now, session_id),
-        )
+        db_mark_session_running(conn, session_id, now)
 
     _zone_running_session[zone_id] = session_id
     asyncio.create_task(_watch_simnode(session_id, session_type, zone_id))
 
     await _broadcast("running", zone_id=zone_id, session_id=session_id)
-    return {"status": "running", "session_id": session_id, "zone_id": zone_id,
-            "stream_url": resp.get("stream_ws_url")}
+    return {
+        "status": "running",
+        "session_id": session_id,
+        "zone_id": zone_id,
+        "stream_url": resp.get("stream_ws_url"),
+    }
 
 
 @router.post("/zones/{zone_id}/stop-race")
 async def zone_stop_race(zone_id: str, _auth=Depends(require_admin)):
     with get_db(DB_PATH) as conn:
-        row = conn.execute(
-            "SELECT id, type FROM race_sessions WHERE phase='running' AND zone_id=? ORDER BY rowid DESC LIMIT 1",
-            (zone_id,),
-        ).fetchone()
-    session_id   = row["id"] if row else None
+        row = db_get_running_session(conn, zone_id)
+    session_id = row["id"] if row else None
     session_type = row["type"] if row else "qualifying"
 
     if session_id:
@@ -444,7 +411,6 @@ async def zone_finalize(zone_id: str, _auth=Depends(require_admin)):
     sm = get_zone_sm(zone_id)
     current = sm.state.value
 
-    # Determine next state mapping
     next_state_map = {
         "QUALIFYING_FINISHED": RaceState.QUALIFYING_DONE,
         "QUALIFYING_ABORTED":  RaceState.QUALIFYING_DONE,
@@ -457,8 +423,7 @@ async def zone_finalize(zone_id: str, _auth=Depends(require_admin)):
     next_state = next_state_map.get(current)
     if next_state is None:
         raise HTTPException(
-            status_code=409,
-            detail=f"当前状态 '{current}' 不支持 finalize 操作"
+            status_code=409, detail=f"当前状态 '{current}' 不支持 finalize 操作"
         )
 
     try:
@@ -473,6 +438,7 @@ async def zone_finalize(zone_id: str, _auth=Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # Watchers and handlers
 # ---------------------------------------------------------------------------
+
 
 async def _watch_simnode(session_id: str, session_type: str, zone_id: str = "default"):
     """Poll Sim Node status every 5s until race ends."""
@@ -494,7 +460,9 @@ async def _watch_simnode(session_id: str, session_type: str, zone_id: str = "def
             break
 
 
-async def _handle_finished(session_id: str, session_type: str, zone_id: str = "default"):
+async def _handle_finished(
+    session_id: str, session_type: str, zone_id: str = "default"
+):
     sm = get_zone_sm(zone_id)
     try:
         sm.transition(_finished_state_for(session_type))
@@ -518,7 +486,7 @@ async def _handle_finished(session_id: str, session_type: str, zone_id: str = "d
     result.setdefault("session_type", session_type)
     result.setdefault("recording_path", recording_path)
     result.setdefault("recorded_at", datetime.datetime.now().isoformat())
-    result["zone_id"] = zone_id  # always overwrite to ensure it's correct
+    result["zone_id"] = zone_id
 
     meta_file.write_text(
         json.dumps(result, ensure_ascii=False, indent=2),
@@ -527,14 +495,15 @@ async def _handle_finished(session_id: str, session_type: str, zone_id: str = "d
 
     now = datetime.datetime.now().isoformat()
     with get_db(DB_PATH) as conn:
-        conn.execute(
-            "UPDATE race_sessions SET phase='recording_ready', finished_at=? WHERE id=?",
-            (now, session_id),
-        )
+        db_mark_session_finished(conn, session_id, now)
 
     _zone_running_session.pop(zone_id, None)
-    await _broadcast("recording_ready", zone_id=zone_id,
-                     session_id=session_id, recording_path=recording_path)
+    await _broadcast(
+        "recording_ready",
+        zone_id=zone_id,
+        session_id=session_id,
+        recording_path=recording_path,
+    )
 
 
 async def _handle_aborted(session_id: str, session_type: str, zone_id: str = "default"):
@@ -545,22 +514,25 @@ async def _handle_aborted(session_id: str, session_type: str, zone_id: str = "de
         pass
     now = datetime.datetime.now().isoformat()
 
-    # Save partial recording if Webots wrote any telemetry data
     rec_dir = pathlib.Path(RECORDINGS_DIR) / session_id
     meta_file = rec_dir / "metadata.json"
     telemetry_file = rec_dir / "telemetry.jsonl"
     if telemetry_file.exists() and not meta_file.exists():
         rec_dir.mkdir(parents=True, exist_ok=True)
         meta_file.write_text(
-            json.dumps({
-                "session_id":    session_id,
-                "session_type":  session_type,
-                "zone_id":       zone_id,
-                "finish_reason": "aborted",
-                "recorded_at":   now,
-                "teams":         [],
-                "final_rankings": [],
-            }, ensure_ascii=False, indent=2),
+            json.dumps(
+                {
+                    "session_id":     session_id,
+                    "session_type":   session_type,
+                    "zone_id":        zone_id,
+                    "finish_reason":  "aborted",
+                    "recorded_at":    now,
+                    "teams":          [],
+                    "final_rankings": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
         db_phase = "recording_ready"
@@ -568,10 +540,7 @@ async def _handle_aborted(session_id: str, session_type: str, zone_id: str = "de
         db_phase = "aborted"
 
     with get_db(DB_PATH) as conn:
-        conn.execute(
-            "UPDATE race_sessions SET phase=?, finished_at=? WHERE id=?",
-            (db_phase, now, session_id),
-        )
+        db_mark_session_aborted(conn, session_id, db_phase, now)
     _zone_running_session.pop(zone_id, None)
     await _broadcast("aborted", zone_id=zone_id, session_id=session_id)
 
@@ -580,9 +549,11 @@ async def _handle_aborted(session_id: str, session_type: str, zone_id: str = "de
 # Legacy endpoints (default zone, backward compat)
 # ---------------------------------------------------------------------------
 
+
 @router.post("/lock-submissions")
 async def lock_submissions(_auth=Depends(require_admin)):
     import server.blueprints.submission as sub_module
+
     sub_module.submissions_locked = True
     return {"status": "locked"}
 
@@ -595,12 +566,8 @@ async def set_session(body: SetSessionBody, _auth=Depends(require_admin)):
         team_ids=body.team_ids,
         total_laps=body.total_laps,
     )
-    # Create default zone if not exists
     with get_db(DB_PATH) as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO zones (id, name, description, total_laps, created_at) VALUES ('default','Default Zone','',3,?)",
-            (datetime.datetime.now().isoformat(),)
-        )
+        db_ensure_default_zone(conn, datetime.datetime.now().isoformat())
     return await zone_set_session("default", zone_body, _auth)
 
 
@@ -671,6 +638,7 @@ async def close_event(_auth=Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # GET /api/admin/live-frame/{session_id} — proxy overhead camera JPEG
 # ---------------------------------------------------------------------------
+
 
 @router.get("/live-frame/{session_id}")
 async def get_live_frame(session_id: str, _auth=Depends(require_admin)):

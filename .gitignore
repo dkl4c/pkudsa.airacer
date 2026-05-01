@@ -7,7 +7,6 @@ venv/
 
 # Database
 *.db
-server/database/
 simnode/database/
 
 # Config files (contain passwords / machine-specific paths)

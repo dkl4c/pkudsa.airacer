@@ -36,11 +36,17 @@ VALID_SLOTS = ("main", "dev", "backup")
 # Password hashing (direct bcrypt, no passlib)
 # ---------------------------------------------------------------------------
 
+
 def _hash_password(plain: str) -> str:
     return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
 
+
 def _verify_password(plain: str, hashed: str) -> bool:
-    return _bcrypt.checkpw(plain.encode(), hashed.encode())
+    try:
+        return _bcrypt.checkpw(plain.encode(), hashed.encode())
+    except:
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Global submission lock (set by admin)
@@ -102,23 +108,26 @@ def _require_team_auth(
 # Request models
 # ---------------------------------------------------------------------------
 
+
 class SubmitRequest(BaseModel):
-    team_id:   str
-    password:  str
-    code:      str        # base64-encoded Python source
-    slot_name: str = "main"   # "main" | "dev" | "backup"
+    team_id: str
+    password: str
+    code: str  # base64-encoded Python source
+    slot_name: str = "main"  # "main" | "dev" | "backup"
 
 
 class ActivateRequest(BaseModel):
-    team_id:   str
-    password:  str
-    slot_name: str   # which slot to make race-active
+    team_id: str
+    password: str
+    slot_name: str  # which slot to make race-active
 
 
 # ---------------------------------------------------------------------------
 # Shared: validate and save code bytes
 # ---------------------------------------------------------------------------
 
+
+# todo: 与SDK代码审查部分保持一致
 def _validate_code(code_str: str) -> None:
     """Run syntax + import + signature checks. Raises HTTPException on failure."""
     with tempfile.NamedTemporaryFile(
@@ -133,7 +142,7 @@ def _validate_code(code_str: str) -> None:
         except py_compile.PyCompileError as exc:
             raise HTTPException(status_code=400, detail=f"Syntax error: {exc}")
 
-        spec   = importlib.util.spec_from_file_location("_team_ctrl_check", tmp_path)
+        spec = importlib.util.spec_from_file_location("_team_ctrl_check", tmp_path)
         module = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(module)
@@ -175,6 +184,7 @@ def _validate_code(code_str: str) -> None:
 # POST /api/submit
 # ---------------------------------------------------------------------------
 
+
 @router.post("/api/submit")
 async def submit_code(body: SubmitRequest):
     if submissions_locked:
@@ -184,7 +194,7 @@ async def submit_code(body: SubmitRequest):
     if slot not in VALID_SLOTS:
         raise HTTPException(
             status_code=400,
-            detail=f"slot_name must be one of: {', '.join(VALID_SLOTS)}"
+            detail=f"slot_name must be one of: {', '.join(VALID_SLOTS)}",
         )
 
     with get_db(DB_PATH) as conn:
@@ -200,14 +210,14 @@ async def submit_code(body: SubmitRequest):
 
     try:
         code_bytes = base64.b64decode(body.code)
-        code_str   = code_bytes.decode("utf-8")
+        code_str = code_bytes.decode("utf-8")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid base64 code: {exc}")
 
     _validate_code(code_str)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest_dir  = pathlib.Path(SUBMISSIONS_DIR) / body.team_id / slot / timestamp
+    dest_dir = pathlib.Path(SUBMISSIONS_DIR) / body.team_id / slot / timestamp
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_file = dest_dir / "team_controller.py"
     dest_file.write_text(code_str, encoding="utf-8")
@@ -231,8 +241,14 @@ async def submit_code(body: SubmitRequest):
             """INSERT INTO submissions
                (id, team_id, code_path, submitted_at, is_active, slot_name, is_race_active)
                VALUES (?, ?, ?, ?, 1, ?, ?)""",
-            (submission_id, body.team_id, str(dest_file), timestamp, slot,
-             1 if was_race_active else 0),
+            (
+                submission_id,
+                body.team_id,
+                str(dest_file),
+                timestamp,
+                slot,
+                1 if was_race_active else 0,
+            ),
         )
 
         # If no slot is race-active yet, auto-activate main
@@ -255,9 +271,9 @@ async def submit_code(body: SubmitRequest):
         )
 
     return {
-        "status":         "queued",
-        "slot_name":      slot,
-        "version":        timestamp,
+        "status": "queued",
+        "slot_name": slot,
+        "version": timestamp,
         "queue_position": queue_pos,
     }
 
@@ -266,13 +282,14 @@ async def submit_code(body: SubmitRequest):
 # POST /api/activate — switch race-active slot
 # ---------------------------------------------------------------------------
 
+
 @router.post("/api/activate")
 async def activate_slot(body: ActivateRequest):
     slot = body.slot_name.lower()
     if slot not in VALID_SLOTS:
         raise HTTPException(
             status_code=400,
-            detail=f"slot_name must be one of: {', '.join(VALID_SLOTS)}"
+            detail=f"slot_name must be one of: {', '.join(VALID_SLOTS)}",
         )
 
     with get_db(DB_PATH) as conn:
@@ -292,8 +309,7 @@ async def activate_slot(body: ActivateRequest):
         ).fetchone()
         if target is None:
             raise HTTPException(
-                status_code=404,
-                detail=f"槽位 '{slot}' 尚无提交，请先上传代码"
+                status_code=404, detail=f"槽位 '{slot}' 尚无提交，请先上传代码"
             )
 
         conn.execute(
@@ -312,9 +328,10 @@ async def activate_slot(body: ActivateRequest):
 # GET /api/test-status/{team_id} — all slots
 # ---------------------------------------------------------------------------
 
+
 @router.get("/api/test-status/{team_id}")
 async def get_test_status(
-    team_id:     str,
+    team_id: str,
     credentials: HTTPBasicCredentials = Depends(_basic_security),
 ):
     _require_team_auth(team_id, credentials)
@@ -331,7 +348,11 @@ async def get_test_status(
             ).fetchone()
 
             if sub is None:
-                slots_data[slot] = {"version": None, "is_race_active": False, "test": None}
+                slots_data[slot] = {
+                    "version": None,
+                    "is_race_active": False,
+                    "test": None,
+                }
                 continue
 
             run = conn.execute(
@@ -348,28 +369,28 @@ async def get_test_status(
             if run:
                 status = run["status"]
                 if status == "queued":
-                    queue_status  = "waiting"
+                    queue_status = "waiting"
                     queue_pos_val = queue_position(sub["id"])
                 elif status == "running":
                     queue_status = "running"
                 elif status in ("done", "skipped"):
                     queue_status = "done"
                     test_info = {
-                        "laps_completed":   run["laps_completed"],
-                        "best_lap_time":    run["best_lap_time"],
+                        "laps_completed": run["laps_completed"],
+                        "best_lap_time": run["best_lap_time"],
                         "collisions_minor": run["collisions_minor"],
                         "collisions_major": run["collisions_major"],
                         "timeout_warnings": run["timeout_warnings"],
-                        "finish_reason":    run["finish_reason"],
-                        "finished_at":      run["finished_at"],
+                        "finish_reason": run["finish_reason"],
+                        "finished_at": run["finished_at"],
                     }
 
             slots_data[slot] = {
-                "version":        sub["submitted_at"],
+                "version": sub["submitted_at"],
                 "is_race_active": bool(sub["is_race_active"]),
-                "queue_status":   queue_status,
+                "queue_status": queue_status,
                 "queue_position": queue_pos_val,
-                "test":           test_info,
+                "test": test_info,
             }
 
     return {"team_id": team_id, "slots": slots_data}
