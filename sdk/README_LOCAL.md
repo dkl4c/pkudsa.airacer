@@ -32,7 +32,7 @@ Files of interest
   imports student code with a restricted import hook and communicates via
   stdin/stdout
 
-For a Chinese student-facing walkthrough see `docs/manual/local_test_guide.md`.
+For a Chinese student-facing walkthrough see `sdk/docs/local_test_guide.md`.
 
 Quick local workflow
 --------------------

@@ -1,5 +1,5 @@
 """
-tests/test_validator.py — sdk/validate_controller.py 的 pytest 套件
+sdk/tests/test_validator.py — sdk/validate_controller.py 的 pytest 套件
 
 覆盖每一条规则的至少一个正样本 + 一个反样本：
 
@@ -20,7 +20,7 @@ tests/test_validator.py — sdk/validate_controller.py 的 pytest 套件
 
 运行：
     cd pkudsa.airacer
-    pytest tests/test_validator.py -v
+    pytest sdk/tests/test_validator.py -v
 """
 
 from __future__ import annotations
@@ -31,12 +31,14 @@ import textwrap
 
 import pytest
 
-# 让 `from sdk.validate_controller import ...` 可用
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+# 位置：sdk/tests/test_validator.py
+# 把 sdk/ 目录加入 sys.path，然后直接 `import validate_controller`。
+# 这样不依赖仓库根当包根，也不强制 `sdk` 变 Python 包。
+SDK_DIR = pathlib.Path(__file__).resolve().parent.parent   # -> sdk/
+if str(SDK_DIR) not in sys.path:
+    sys.path.insert(0, str(SDK_DIR))
 
-from sdk.validate_controller import (  # noqa: E402
+from validate_controller import (  # noqa: E402
     Validator,
     ValidationReport,
     DEFAULT_RULES,
