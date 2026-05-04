@@ -3,12 +3,18 @@ Team and zone public endpoints.
 No auth required — read-only public data.
 """
 
-import datetime
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from server.config.config import DB_PATH
+from server.database.action import (
+    create_team,
+    db_get_teams_by_zone,
+    db_get_zone_detailed,
+    db_list_zones,
+    db_resource_exists,
+    list_teams as db_list_all_teams,
+)
 from server.database.models import get_db
 from server.race.state_machine import get_zone_sm
 
@@ -33,14 +39,7 @@ class RegisterRequest(BaseModel):
 @router.get("/zones")
 async def list_zones():
     with get_db(DB_PATH) as conn:
-        rows = conn.execute("""
-            SELECT z.id, z.name, z.description, z.total_laps, z.created_at,
-                   COUNT(t.id) AS team_count
-            FROM zones z
-            LEFT JOIN teams t ON t.zone_id = z.id
-            GROUP BY z.id
-            ORDER BY z.created_at
-        """).fetchall()
+        rows = db_list_zones(conn)
 
     result = []
     for r in rows:
@@ -64,38 +63,20 @@ async def list_zones():
 @router.get("/zones/{zone_id}")
 async def get_zone(zone_id: str):
     with get_db(DB_PATH) as conn:
-        row = conn.execute(
-            "SELECT id, name, description, total_laps, created_at FROM zones WHERE id=?",
-            (zone_id,)
-        ).fetchone()
-        if row is None:
+        result = db_get_zone_detailed(conn, zone_id)
+        if result is None:
             raise HTTPException(status_code=404, detail=f"赛区未找到: {zone_id}")
-
-        teams = conn.execute(
-            "SELECT id, name, created_at FROM teams WHERE zone_id=? ORDER BY created_at",
-            (zone_id,)
-        ).fetchall()
-
-        standings = conn.execute("""
-            SELECT rp.team_id, t.name, SUM(rp.points) AS total_points
-            FROM race_points rp
-            JOIN teams t ON rp.team_id = t.id
-            JOIN race_sessions rs ON rp.session_id = rs.id
-            WHERE rs.zone_id = ?
-            GROUP BY rp.team_id
-            ORDER BY total_points DESC
-        """, (zone_id,)).fetchall()
 
     sm = get_zone_sm(zone_id)
     return {
-        "id":          row["id"],
-        "name":        row["name"],
-        "description": row["description"],
-        "total_laps":  row["total_laps"],
-        "created_at":  row["created_at"],
+        "id":          result["id"],
+        "name":        result["name"],
+        "description": result["description"],
+        "total_laps":  result["total_laps"],
+        "created_at":  result["created_at"],
         "state":       sm.state.value,
-        "teams":       [{"id": t["id"], "name": t["name"]} for t in teams],
-        "standings":   [dict(s) for s in standings],
+        "teams":       [{"id": t["id"], "name": t["name"]} for t in result["teams"]],
+        "standings":   result["standings"],
     }
 
 
@@ -118,25 +99,15 @@ async def register_team(body: RegisterRequest):
         )
 
     password_hash = _bcrypt.hashpw(body.password.encode(), _bcrypt.gensalt()).decode()
-    now = datetime.datetime.now().isoformat()
 
     with get_db(DB_PATH) as conn:
-        zone = conn.execute(
-            "SELECT id FROM zones WHERE id=?", (body.zone_id,)
-        ).fetchone()
-        if zone is None:
+        if not db_resource_exists(conn, "zones", body.zone_id):
             raise HTTPException(status_code=404, detail=f"赛区不存在: {body.zone_id}")
 
-        existing = conn.execute(
-            "SELECT id FROM teams WHERE id=?", (body.team_id,)
-        ).fetchone()
-        if existing:
+        if db_resource_exists(conn, "teams", body.team_id):
             raise HTTPException(status_code=409, detail=f"队伍ID已被占用: {body.team_id}")
 
-        conn.execute(
-            "INSERT INTO teams (id, name, password_hash, created_at, zone_id) VALUES (?,?,?,?,?)",
-            (body.team_id, body.team_name, password_hash, now, body.zone_id),
-        )
+        create_team(conn, body.team_id, body.team_name, password_hash, body.zone_id)
 
     return {"status": "registered", "team_id": body.team_id, "zone_id": body.zone_id}
 
@@ -149,12 +120,7 @@ async def register_team(body: RegisterRequest):
 async def list_teams(zone_id: str = None):
     with get_db(DB_PATH) as conn:
         if zone_id:
-            rows = conn.execute(
-                "SELECT id, name, zone_id FROM teams WHERE zone_id=? ORDER BY name",
-                (zone_id,)
-            ).fetchall()
+            rows = db_get_teams_by_zone(conn, zone_id)
         else:
-            rows = conn.execute(
-                "SELECT id, name, zone_id FROM teams ORDER BY name"
-            ).fetchall()
+            rows = db_list_all_teams(conn)
     return [{"id": r["id"], "name": r["name"], "zone_id": r["zone_id"]} for r in rows]

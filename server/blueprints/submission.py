@@ -17,7 +17,6 @@ import py_compile
 import sys
 import tempfile
 import threading
-import uuid
 from typing import Optional
 
 import bcrypt as _bcrypt
@@ -27,6 +26,14 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
 from server.config.config import DB_PATH, SUBMISSIONS_DIR
+from server.database.action import (
+    create_test_run,
+    db_activate_submission_slot,
+    db_create_submission_with_slot,
+    db_get_submission_by_slot,
+    db_get_team_secure,
+    get_latest_test_run,
+)
 from server.database.models import get_db
 
 router = APIRouter()
@@ -92,9 +99,7 @@ def _require_team_auth(
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     with get_db(DB_PATH) as conn:
-        row = conn.execute(
-            "SELECT password_hash FROM teams WHERE id = ?", (team_id,)
-        ).fetchone()
+        row = db_get_team_secure(conn, team_id)
 
     if row is None:
         raise HTTPException(status_code=401, detail="Team not found")
@@ -205,10 +210,7 @@ async def submit_code(body: SubmitRequest):
         )
 
     with get_db(DB_PATH) as conn:
-        team_row = conn.execute(
-            "SELECT id, name, password_hash FROM teams WHERE id = ?",
-            (body.team_id,),
-        ).fetchone()
+        team_row = db_get_team_secure(conn, body.team_id)
 
     if team_row is None:
         raise HTTPException(status_code=401, detail="Team not found")
@@ -229,45 +231,11 @@ async def submit_code(body: SubmitRequest):
     dest_file = dest_dir / "team_controller.py"
     dest_file.write_text(code_str, encoding="utf-8")
 
-    submission_id = str(uuid.uuid4())
-
     with get_db(DB_PATH) as conn:
-        # Deactivate previous version of the same slot only
-        conn.execute(
-            "UPDATE submissions SET is_active = 0 WHERE team_id = ? AND slot_name = ?",
-            (body.team_id, slot),
+        submission_id = db_create_submission_with_slot(
+            conn, body.team_id, str(dest_file), slot,
+            submitted_at=timestamp,
         )
-        # If this slot was race-active and we're replacing it, keep it race-active
-        was_race_active = conn.execute(
-            """SELECT COUNT(*) FROM submissions
-               WHERE team_id=? AND slot_name=? AND is_race_active=1""",
-            (body.team_id, slot),
-        ).fetchone()[0]
-
-        conn.execute(
-            """INSERT INTO submissions
-               (id, team_id, code_path, submitted_at, is_active, slot_name, is_race_active)
-               VALUES (?, ?, ?, ?, 1, ?, ?)""",
-            (
-                submission_id,
-                body.team_id,
-                str(dest_file),
-                timestamp,
-                slot,
-                1 if was_race_active else 0,
-            ),
-        )
-
-        # If no slot is race-active yet, auto-activate main
-        any_race_active = conn.execute(
-            "SELECT COUNT(*) FROM submissions WHERE team_id=? AND is_race_active=1",
-            (body.team_id,),
-        ).fetchone()[0]
-        if not any_race_active:
-            conn.execute(
-                "UPDATE submissions SET is_race_active=1 WHERE id=?",
-                (submission_id,),
-            )
 
     return {
         "status": "uploaded",
@@ -291,33 +259,17 @@ async def activate_slot(body: ActivateRequest):
         )
 
     with get_db(DB_PATH) as conn:
-        team_row = conn.execute(
-            "SELECT id, password_hash FROM teams WHERE id=?", (body.team_id,)
-        ).fetchone()
+        team_row = db_get_team_secure(conn, body.team_id)
         if team_row is None:
             raise HTTPException(status_code=401, detail="Team not found")
         if not _verify_password(body.password, team_row["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid password")
 
-        target = conn.execute(
-            """SELECT id FROM submissions
-               WHERE team_id=? AND slot_name=? AND is_active=1
-               ORDER BY submitted_at DESC LIMIT 1""",
-            (body.team_id, slot),
-        ).fetchone()
-        if target is None:
+        success = db_activate_submission_slot(conn, body.team_id, slot)
+        if not success:
             raise HTTPException(
                 status_code=404, detail=f"槽位 '{slot}' 尚无提交，请先上传代码"
             )
-
-        conn.execute(
-            "UPDATE submissions SET is_race_active=0 WHERE team_id=?",
-            (body.team_id,),
-        )
-        conn.execute(
-            "UPDATE submissions SET is_race_active=1 WHERE id=?",
-            (target["id"],),
-        )
 
     return {"status": "activated", "slot_name": slot, "team_id": body.team_id}
 
@@ -332,10 +284,7 @@ async def request_test(body: TestRequest):
         )
 
     with get_db(DB_PATH) as conn:
-        team_row = conn.execute(
-            "SELECT id, password_hash FROM teams WHERE id=?",
-            (body.team_id,),
-        ).fetchone()
+        team_row = db_get_team_secure(conn, body.team_id)
 
     if team_row is None:
         raise HTTPException(status_code=401, detail="Team not found")
@@ -343,12 +292,7 @@ async def request_test(body: TestRequest):
         raise HTTPException(status_code=401, detail="Invalid password")
 
     with get_db(DB_PATH) as conn:
-        submission = conn.execute(
-            """SELECT id, submitted_at FROM submissions
-               WHERE team_id=? AND slot_name=? AND is_active=1
-               ORDER BY submitted_at DESC LIMIT 1""",
-            (body.team_id, slot),
-        ).fetchone()
+        submission = db_get_submission_by_slot(conn, body.team_id, slot)
 
         if submission is None:
             raise HTTPException(
@@ -356,10 +300,7 @@ async def request_test(body: TestRequest):
                 detail=f"槽位 '{slot}' 尚无提交，请先上传代码",
             )
 
-        last_run = conn.execute(
-            "SELECT status FROM test_runs WHERE submission_id=? ORDER BY id DESC LIMIT 1",
-            (submission["id"],),
-        ).fetchone()
+        last_run = get_latest_test_run(conn, submission["id"])
 
         if last_run and last_run["status"] in ("queued", "running"):
             queue_pos = queue_position(submission["id"])
@@ -374,10 +315,7 @@ async def request_test(body: TestRequest):
 
         queue_pos = enqueue_test(submission["id"])
         queued_at = datetime.datetime.now().isoformat()
-        conn.execute(
-            "INSERT INTO test_runs (submission_id, status, queued_at) VALUES (?, 'queued', ?)",
-            (submission["id"], queued_at),
-        )
+        create_test_run(conn, submission["id"], queued_at)
 
     return {
         "status": "queued",
@@ -403,12 +341,7 @@ async def get_test_status(
 
     with get_db(DB_PATH) as conn:
         for slot in VALID_SLOTS:
-            sub = conn.execute(
-                """SELECT id, submitted_at, is_race_active FROM submissions
-                   WHERE team_id=? AND slot_name=? AND is_active=1
-                   ORDER BY submitted_at DESC LIMIT 1""",
-                (team_id, slot),
-            ).fetchone()
+            sub = db_get_submission_by_slot(conn, team_id, slot)
 
             if sub is None:
                 slots_data[slot] = {
@@ -418,12 +351,7 @@ async def get_test_status(
                 }
                 continue
 
-            run = conn.execute(
-                """SELECT * FROM test_runs
-                   WHERE submission_id=?
-                   ORDER BY id DESC LIMIT 1""",
-                (sub["id"],),
-            ).fetchone()
+            run = get_latest_test_run(conn, sub["id"])
 
             test_info = None
             queue_status = "no_run"
