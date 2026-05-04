@@ -3,6 +3,7 @@ Team submission and test-status endpoints.
 
 POST /api/submit                  — upload base64-encoded Python driver (slot_name optional)
 POST /api/activate                — switch which slot is the race-active one
+POST /api/test-request            — enqueue manual test request for an uploaded slot
 GET  /api/test-status/{team_id}   — all 3 slot statuses (Basic Auth)
 """
 
@@ -120,6 +121,12 @@ class ActivateRequest(BaseModel):
     team_id: str
     password: str
     slot_name: str  # which slot to make race-active
+
+
+class TestRequest(BaseModel):
+    team_id: str
+    password: str
+    slot_name: str  # which slot to request test for
 
 
 # ---------------------------------------------------------------------------
@@ -262,19 +269,10 @@ async def submit_code(body: SubmitRequest):
                 (submission_id,),
             )
 
-    queue_pos = enqueue_test(submission_id)
-    queued_at = datetime.datetime.now().isoformat()
-    with get_db(DB_PATH) as conn:
-        conn.execute(
-            "INSERT INTO test_runs (submission_id, status, queued_at) VALUES (?, 'queued', ?)",
-            (submission_id, queued_at),
-        )
-
     return {
-        "status": "queued",
+        "status": "uploaded",
         "slot_name": slot,
         "version": timestamp,
-        "queue_position": queue_pos,
     }
 
 
@@ -322,6 +320,71 @@ async def activate_slot(body: ActivateRequest):
         )
 
     return {"status": "activated", "slot_name": slot, "team_id": body.team_id}
+
+
+@router.post("/api/test-request")
+async def request_test(body: TestRequest):
+    slot = body.slot_name.lower()
+    if slot not in VALID_SLOTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"slot_name must be one of: {', '.join(VALID_SLOTS)}",
+        )
+
+    with get_db(DB_PATH) as conn:
+        team_row = conn.execute(
+            "SELECT id, password_hash FROM teams WHERE id=?",
+            (body.team_id,),
+        ).fetchone()
+
+    if team_row is None:
+        raise HTTPException(status_code=401, detail="Team not found")
+    if not _verify_password(body.password, team_row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    with get_db(DB_PATH) as conn:
+        submission = conn.execute(
+            """SELECT id, submitted_at FROM submissions
+               WHERE team_id=? AND slot_name=? AND is_active=1
+               ORDER BY submitted_at DESC LIMIT 1""",
+            (body.team_id, slot),
+        ).fetchone()
+
+        if submission is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"槽位 '{slot}' 尚无提交，请先上传代码",
+            )
+
+        last_run = conn.execute(
+            "SELECT status FROM test_runs WHERE submission_id=? ORDER BY id DESC LIMIT 1",
+            (submission["id"],),
+        ).fetchone()
+
+        if last_run and last_run["status"] in ("queued", "running"):
+            queue_pos = queue_position(submission["id"])
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"测试已在队列中，当前位置 {queue_pos}"
+                    if queue_pos is not None
+                    else "测试已在队列中"
+                ),
+            )
+
+        queue_pos = enqueue_test(submission["id"])
+        queued_at = datetime.datetime.now().isoformat()
+        conn.execute(
+            "INSERT INTO test_runs (submission_id, status, queued_at) VALUES (?, 'queued', ?)",
+            (submission["id"], queued_at),
+        )
+
+    return {
+        "status": "queued",
+        "slot_name": slot,
+        "version": submission["submitted_at"],
+        "queue_position": queue_pos,
+    }
 
 
 # ---------------------------------------------------------------------------

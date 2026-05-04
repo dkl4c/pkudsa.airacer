@@ -415,7 +415,7 @@
       <div class="collapse" id="notices-collapse">
         <div class="card-body pt-2 pb-3 px-4">
           <ul class="mb-2 ps-3" style="font-size:.875rem;color:#374151;line-height:2;">
-            <li>每次上传会覆盖对应槽位的当前版本，请等待测试完成后再次提交。</li>
+            <li>每次上传会覆盖对应槽位的当前版本。上传后不会自动进入测试队列，需要手动申请测试。</li>
             <li>提交文件须为 <code>.py</code> 格式，文件大小不超过 <strong>1 MB</strong>。</li>
             <li>文件须包含 <code>Controller</code> 类及规定的接口方法。</li>
             <li>代码运行时间超过单圈时限会产生超时警告，三次警告将被取消资格。</li>
@@ -790,6 +790,16 @@ function renderSlotCard(def, slot) {
     <button class="btn btn-primary btn-sm" onclick="quickUploadSlot('${def.key}')">
       <i class="bi bi-cloud-upload me-1"></i>上传新版本
     </button>`;
+  const requestBtn = slot?.version && !['waiting', 'running'].includes(slot.queue_status)
+    ? `<button class="btn btn-outline-primary btn-sm" onclick="requestTest('${def.key}')">
+        <i class="bi bi-play-circle me-1"></i>申请测试
+       </button>`
+    : '';
+  const requestStatusBtn = slot?.version && ['waiting', 'running'].includes(slot.queue_status)
+    ? `<button class="btn btn-outline-secondary btn-sm" disabled>
+        <i class="bi bi-clock-history me-1"></i>${slot.queue_status === 'running' ? '运行中' : '排队中'}
+       </button>`
+    : '';
   const activateBtn = !isActive
     ? `<button class="btn btn-outline-success btn-sm btn-activate" onclick="activateSlot('${def.key}')">
         <i class="bi bi-check-circle me-1"></i>设为参赛
@@ -812,6 +822,8 @@ function renderSlotCard(def, slot) {
         ${reportHtml}
         <div class="d-flex flex-wrap gap-2 mt-auto pt-2">
           ${uploadBtn}
+          ${requestBtn}
+          ${requestStatusBtn}
           ${activateBtn}
         </div>
       </div>
@@ -980,8 +992,8 @@ async function handleUpload() {
 
   setUploadLoading(false);
 
-  if (data.status === 'queued' || data.success) {
-    showToast('success', `上传成功！${slotName} 槽位已进入测试队列`);
+  if (data.status === 'uploaded' || data.success) {
+    showToast('success', `上传成功！请手动申请测试。`);
     resetDropzone();
     await refreshSlots();
     startPolling();
@@ -990,6 +1002,33 @@ async function handleUpload() {
     showToast('warning', '提交已关闭，管理员已锁定。');
   } else {
     showToast('danger', data.message || data.detail || '上传失败');
+  }
+}
+
+async function requestTest(slotName) {
+  let resp, data;
+  try {
+    resp = await fetch('/api/test-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        team_id:  S.teamId,
+        password: S.password,
+        slot_name: slotName,
+      }),
+    });
+    data = await resp.json();
+  } catch (e) {
+    showToast('danger', '网络错误: ' + e.message);
+    return;
+  }
+
+  if (resp.ok && data.status === 'queued') {
+    showToast('success', `测试申请成功！${slotName} 槽位已进入队列 (${data.queue_position})`);
+    await refreshSlots();
+    startPolling();
+  } else {
+    showToast('danger', data.message || data.detail || '测试申请失败');
   }
 }
 
