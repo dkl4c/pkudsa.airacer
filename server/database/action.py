@@ -46,6 +46,53 @@ def db_delete_zone(conn, zone_id: str) -> bool:
     row = conn.execute("SELECT id FROM zones WHERE id=?", (zone_id,)).fetchone()
     if row is None:
         return False
+
+    # Collect all team IDs in this zone
+    team_ids = [
+        r[0] for r in
+        conn.execute("SELECT id FROM teams WHERE zone_id=?", (zone_id,)).fetchall()
+    ]
+
+    if team_ids:
+        placeholders = ",".join("?" for _ in team_ids)
+        params = list(team_ids)
+
+        # Delete race_points for these teams
+        conn.execute(
+            f"DELETE FROM race_points WHERE team_id IN ({placeholders})", params
+        )
+
+        # Collect submission IDs for these teams
+        sub_ids = [
+            r[0] for r in
+            conn.execute(
+                f"SELECT id FROM submissions WHERE team_id IN ({placeholders})", params
+            ).fetchall()
+        ]
+
+        if sub_ids:
+            sub_placeholders = ",".join("?" for _ in sub_ids)
+            sub_params = list(sub_ids)
+            # Delete test_runs for these submissions
+            conn.execute(
+                f"DELETE FROM test_runs WHERE submission_id IN ({sub_placeholders})",
+                sub_params,
+            )
+
+        # Delete submissions for these teams
+        conn.execute(
+            f"DELETE FROM submissions WHERE team_id IN ({placeholders})", params
+        )
+
+        # Delete the teams
+        conn.execute(
+            f"DELETE FROM teams WHERE id IN ({placeholders})", params
+        )
+
+    # Delete race_sessions belonging to this zone
+    conn.execute("DELETE FROM race_sessions WHERE zone_id=?", (zone_id,))
+
+    # Finally delete the zone
     conn.execute("DELETE FROM zones WHERE id=?", (zone_id,))
     return True
 
@@ -219,12 +266,16 @@ def db_upsert_session(
 
 def db_get_waiting_session(conn, zone_id: str) -> Optional[Dict]:
     row = conn.execute(
-        """SELECT id, type, total_laps FROM race_sessions
+        """SELECT id, type, total_laps, team_ids FROM race_sessions
            WHERE phase='waiting' AND zone_id=?
            ORDER BY rowid DESC LIMIT 1""",
         (zone_id,),
     ).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    result = dict(row)
+    result["team_ids"] = json.loads(result["team_ids"]) if result["team_ids"] else []
+    return result
 
 
 def db_mark_session_running(conn, session_id: str, started_at: str):
@@ -403,6 +454,16 @@ def db_activate_submission_slot(
     )
 
     return True
+
+
+def db_get_submission_by_id(conn, submission_id: str) -> Optional[Dict]:
+    """按 submission_id 查询单条提交记录。"""
+    row = conn.execute(
+        "SELECT id, team_id, code_path, submitted_at, slot_name, is_active, is_race_active "
+        "FROM submissions WHERE id = ?",
+        (submission_id,),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------

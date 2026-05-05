@@ -736,6 +736,19 @@ const PHASE_ICONS = {
   completed:    'bi-check-circle',
 };
 
+// Map detailed backend RaceState values to frontend phase keys
+function stateToPhase(state) {
+  const s = state || '';
+  if (s === 'REGISTRATION') return 'registration';
+  if (s === 'IDLE') return 'idle';
+  if (s.startsWith('QUALIFYING')) return 'qualifying';
+  if (s.startsWith('GROUP')) return 'group_race';
+  if (s.startsWith('SEMI')) return 'semi';
+  if (s.startsWith('FINAL')) return 'final';
+  if (s === 'CLOSED') return 'completed';
+  return s;
+}
+
 // ── State ─────────────────────────────────────────
 let zoneId = null;
 let standingsTimer = null;
@@ -833,10 +846,11 @@ function renderHeader(data) {
 
   // Phase badge
   const state = data.state || data.phase || data.status || 'unknown';
-  const phaseLabel = PHASE_LABELS[state] || state;
+  const phase = stateToPhase(state);
+  const phaseLabel = PHASE_LABELS[phase] || state;
   const badgeEl = document.getElementById('phase-badge');
-  badgeEl.className = 'phase-badge ' + state;
-  badgeEl.innerHTML = `<i class="bi ${PHASE_ICONS[state] || 'bi-circle'} me-1"></i><span>${escHtml(phaseLabel)}</span>`;
+  badgeEl.className = 'phase-badge ' + phase;
+  badgeEl.innerHTML = `<i class="bi ${PHASE_ICONS[phase] || 'bi-circle'} me-1"></i><span>${escHtml(phaseLabel)}</span>`;
 
   // Team count
   const teams = data.teams || [];
@@ -851,7 +865,8 @@ function renderHeader(data) {
 function renderPhaseFlow(data) {
   const body = document.getElementById('phase-flow-body');
   const state = data.state || data.phase || data.status || 'unknown';
-  const currentIdx = PHASE_ORDER.indexOf(state);
+  const phase = stateToPhase(state);
+  const currentIdx = PHASE_ORDER.indexOf(phase);
 
   const flow = document.createElement('div');
   flow.className = 'phase-flow';

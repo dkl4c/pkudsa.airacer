@@ -143,6 +143,7 @@ h1, h2, h3, .brand-font {
 .btn-danger:hover { transform: translateY(-2px); }
 
 /* ── Badges ── */
+.badge-state-registration  { background: #2563eb; color: #fff; }
 .badge-state-idle          { background: #6b7280; color: #fff; }
 .badge-state-running       { background: var(--success); color: #fff; }
 .badge-state-recording_ready { background: var(--info); color: #fff; }

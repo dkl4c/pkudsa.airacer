@@ -266,7 +266,7 @@
       <div id="sec-control" class="sec-panel" style="display:none;">
         <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
           <div class="section-title mb-0" id="ctrl-title">选择赛区</div>
-          <span id="ctrl-badge" class="badge fs-6 px-3 py-2 badge-state-idle">idle</span>
+          <span id="ctrl-badge" class="badge fs-6 px-3 py-2 badge-state-registration">registration</span>
         </div>
 
         <!-- Bracket -->
@@ -333,7 +333,7 @@
           <div class="d-flex align-items-center gap-2 mb-3">
             <span class="pulse-ring" id="live-pulse" style="display:none;"></span>
             <span style="font-family:'Rajdhani',sans-serif;font-size:1.1rem;font-weight:700;">实时状态</span>
-            <span id="live-state-badge" class="badge badge-state-idle ms-auto">idle</span>
+            <span id="live-state-badge" class="badge badge-state-registration ms-auto">registration</span>
           </div>
           <div class="row g-2 mb-3">
             <div class="col-6 col-md-3">
@@ -468,29 +468,35 @@
           </div>
         </div>
 
-        <!-- Delete zone -->
-        <div class="ctrl-card mb-4">
-          <h5>删除赛区</h5>
-          <div class="row g-2 align-items-end">
-            <div class="col-md-4">
-              <label class="form-label">赛区 ID</label>
-              <input type="text" id="dz-id" class="form-control" placeholder="输入要删除的赛区 ID">
-            </div>
-            <div class="col-auto">
-              <button class="btn btn-danger" onclick="doDeleteZone()">删除赛区</button>
-            </div>
-          </div>
-        </div>
-
         <!-- Danger zone -->
         <div class="danger-zone">
-          <div class="danger-zone-title">危险区域</div>
-          <p class="text-danger mb-3" style="font-size:.875rem;">
-            以下操作不可逆，请谨慎确认后执行。
+          <div class="danger-zone-title">提交管理</div>
+          <p class="text-muted mb-3" style="font-size:.875rem;">
+            锁定后队伍将无法上传或切换代码，赛区状态从报名阶段转入待命。<br>
+            <span class="text-danger">生产环境锁定后不应再次解锁。</span>
           </p>
-          <button class="btn btn-danger btn-lg px-4" onclick="doLockSubmissions()">
+          <button id="btn-toggle-submissions" class="btn btn-danger btn-lg px-4" onclick="doToggleSubmissions()">
             锁定所有队伍提交
           </button>
+
+          <hr class="my-4" style="border-color: rgba(220,38,38,.3);">
+
+          <div class="danger-zone-title">删除赛区</div>
+          <p class="text-muted mb-3" style="font-size:.875rem;">
+            删除赛区将移除其所有队伍和比赛记录。<br>
+            <span class="text-danger">此操作不可逆，请谨慎确认。</span>
+          </p>
+          <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label">选择赛区</label>
+              <select id="dz-id" class="form-select">
+                <option value="">-- 选择要删除的赛区 --</option>
+              </select>
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-outline-danger" onclick="doDeleteZone()">删除赛区</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -640,6 +646,16 @@ async function loadZones() {
   } catch(e) { _zones = []; }
   renderSidebar();
   renderOverview();
+  _populateDeleteZoneSelect();
+}
+
+function _populateDeleteZoneSelect() {
+  var sel = document.getElementById('dz-id');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">-- 选择要删除的赛区 --</option>'
+    + _zones.map(function(z) {
+        return '<option value="' + z.zone_id + '">' + esc(z.name || z.zone_id) + ' (' + z.zone_id + ')</option>';
+      }).join('');
 }
 
 function renderSidebar() {
@@ -663,7 +679,7 @@ function renderOverview() {
   var g = document.getElementById('overview-grid');
   if (!_zones.length) { g.innerHTML = '<div class="text-muted">暂无赛区数据</div>'; return; }
   g.innerHTML = _zones.map(function(z) {
-    var bc = 'badge-state-' + (z.state || 'idle');
+    var bc = 'badge-state-' + (z.state || 'idle').toLowerCase();
     return '<div class="zone-card">'
       + '<div class="zone-card-name mb-2">' + esc(z.name || z.zone_id) + '</div>'
       + '<div class="d-flex gap-2 mb-2">'
@@ -785,7 +801,7 @@ function applyLiveStatus(msg) {
   if (pulse) pulse.style.display = msg.state === 'running' ? 'inline-block' : 'none';
 
   var sb = document.getElementById('live-state-badge');
-  if (sb) { sb.className = 'badge badge-state-' + (msg.state || 'idle') + ' ms-auto'; sb.textContent = msg.state || '--'; }
+  if (sb) { sb.className = 'badge badge-state-' + (msg.state || 'idle').toLowerCase() + ' ms-auto'; sb.textContent = msg.state || '--'; }
 
   setText('live-session-id', msg.session_id || '--');
   setText('live-sim-time',   msg.sim_time != null ? msg.sim_time.toFixed(1) + 's' : '--');
@@ -798,7 +814,7 @@ function applyLiveStatus(msg) {
 function setCtrlBadge(state) {
   var b = document.getElementById('ctrl-badge');
   if (!b) return;
-  b.className = 'badge fs-6 px-3 py-2 badge-state-' + (state || 'idle');
+  b.className = 'badge fs-6 px-3 py-2 badge-state-' + (state || 'idle').toLowerCase();
   b.textContent = state || '--';
 }
 
@@ -827,7 +843,7 @@ function renderVehicles(vehicles) {
       + '<td>' + esc(tid) + '</td>'
       + '<td>' + (v.lap != null ? v.lap : '--') + '</td>'
       + '<td>' + (v.speed != null ? v.speed.toFixed(1) : '--') + '</td>'
-      + '<td><span class="badge badge-state-' + (v.status||'idle') + '">' + (v.status||'--') + '</span></td>'
+      + '<td><span class="badge badge-state-' + (v.status||'idle').toLowerCase() + '">' + (v.status||'--') + '</span></td>'
       + '</tr>';
   }).join('');
 }
@@ -930,28 +946,52 @@ async function doCreateZone() {
 }
 
 async function doDeleteZone() {
-  var zid = document.getElementById('dz-id').value.trim();
-  if (!zid) { toast('请输入赛区 ID', 'warning'); return; }
+  var zid = document.getElementById('dz-id').value;
+  if (!zid) { toast('请选择要删除的赛区', 'warning'); return; }
   if (!confirm('确认删除赛区 "' + zid + '"？此操作不可撤销。')) return;
   try {
     var r = await api('DELETE', '/api/admin/zones/' + zid);
     var d = await r.json();
     if (r.ok) {
       toast(d.message || '赛区已删除', 'success');
-      document.getElementById('dz-id').value = '';
       if (currentZone === zid) currentZone = null;
       await loadZones();
     } else { toast(d.detail || d.message || '删除失败', 'danger'); }
   } catch(e) { toast('请求失败: ' + e.message, 'danger'); }
 }
 
-async function doLockSubmissions() {
-  if (!confirm('确认锁定所有队伍的代码提交？锁定后队伍将无法上传新版本，此操作不可逆。')) return;
-  try {
-    var r = await api('POST', '/api/admin/lock-submissions');
-    var d = await r.json();
-    toast(r.ok ? (d.message||'提交已锁定') : (d.detail||d.message||'操作失败'), r.ok ? 'success' : 'danger');
-  } catch(e) { toast('请求失败: ' + e.message, 'danger'); }
+var _submissionsLocked = false;
+
+function _updateLockButton() {
+  var btn = document.getElementById('btn-toggle-submissions');
+  if (!btn) return;
+  if (_submissionsLocked) {
+    btn.textContent = '解锁所有队伍提交';
+    btn.className = 'btn btn-warning btn-lg px-4';
+  } else {
+    btn.textContent = '锁定所有队伍提交';
+    btn.className = 'btn btn-danger btn-lg px-4';
+  }
+}
+
+async function doToggleSubmissions() {
+  if (_submissionsLocked) {
+    if (!confirm('确认解锁代码提交？解锁后队伍可继续提交新代码。\n\n生产环境不建议执行此操作。')) return;
+    try {
+      var r = await api('POST', '/api/admin/unlock-submissions');
+      var d = await r.json();
+      if (r.ok) { _submissionsLocked = false; _updateLockButton(); }
+      toast(r.ok ? (d.message||'提交已解锁') : (d.detail||d.message||'操作失败'), r.ok ? 'success' : 'danger');
+    } catch(e) { toast('请求失败: ' + e.message, 'danger'); }
+  } else {
+    if (!confirm('确认锁定所有队伍的代码提交？锁定后队伍将无法上传新版本。')) return;
+    try {
+      var r = await api('POST', '/api/admin/lock-submissions');
+      var d = await r.json();
+      if (r.ok) { _submissionsLocked = true; _updateLockButton(); }
+      toast(r.ok ? (d.message||'提交已锁定') : (d.detail||d.message||'操作失败'), r.ok ? 'success' : 'danger');
+    } catch(e) { toast('请求失败: ' + e.message, 'danger'); }
+  }
 }
 
 /* ================================================================

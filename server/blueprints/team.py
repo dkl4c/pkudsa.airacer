@@ -9,13 +9,16 @@ from pydantic import BaseModel
 from server.config.config import DB_PATH
 from server.database.action import (
     create_team,
+    db_get_running_session,
     db_get_teams_by_zone,
     db_get_zone_detailed,
+    db_get_zone_standings,
     db_list_zones,
     db_resource_exists,
     list_teams as db_list_all_teams,
 )
 from server.database.models import get_db
+from server.race.bracket import compute_bracket
 from server.race.state_machine import get_zone_sm
 
 router = APIRouter(prefix="/api")
@@ -68,6 +71,7 @@ async def get_zone(zone_id: str):
             raise HTTPException(status_code=404, detail=f"赛区未找到: {zone_id}")
 
     sm = get_zone_sm(zone_id)
+    teams_list = [{"id": t["id"], "name": t["name"]} for t in result["teams"]]
     return {
         "id":          result["id"],
         "name":        result["name"],
@@ -75,8 +79,44 @@ async def get_zone(zone_id: str):
         "total_laps":  result["total_laps"],
         "created_at":  result["created_at"],
         "state":       sm.state.value,
-        "teams":       [{"id": t["id"], "name": t["name"]} for t in result["teams"]],
+        "teams":       teams_list,
         "standings":   result["standings"],
+        "bracket":     compute_bracket(len(teams_list)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/zones/{zone_id}/status — live phase info for audience
+# ---------------------------------------------------------------------------
+
+@router.get("/zones/{zone_id}/status")
+async def get_zone_status(zone_id: str):
+    sm = get_zone_sm(zone_id)
+    state = sm.state.value
+
+    with get_db(DB_PATH) as conn:
+        running = db_get_running_session(conn, zone_id)
+
+    return {
+        "zone_id": zone_id,
+        "phase": state,
+        "state": state,
+        "running_session_id": running["id"] if running else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/zones/{zone_id}/qualifying-results — standings for audience
+# ---------------------------------------------------------------------------
+
+@router.get("/zones/{zone_id}/qualifying-results")
+async def get_qualifying_results(zone_id: str):
+    with get_db(DB_PATH) as conn:
+        results = db_get_zone_standings(conn, zone_id)
+
+    return {
+        "zone_id": zone_id,
+        "results": results,
     }
 
 

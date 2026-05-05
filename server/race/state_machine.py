@@ -11,6 +11,8 @@ from enum import Enum
 class RaceState(str, Enum):
     """赛事状态机，以Zone为单位"""
 
+    # 报名阶段（初始状态，赛程正式开始前）
+    REGISTRATION = "REGISTRATION"
     # 空闲待命
     IDLE = "IDLE"
     # 资格赛
@@ -39,7 +41,11 @@ class RaceState(str, Enum):
 # The dict below lists non-IDLE legal targets from each source.
 # 状态转换规则（IDLE 状态可以转换到任何其他状态）
 _ALLOWED_NON_IDLE: dict[RaceState, set[RaceState]] = {
+    RaceState.REGISTRATION: {
+        RaceState.IDLE,
+    },
     RaceState.IDLE: {
+        RaceState.REGISTRATION,
         RaceState.QUALIFYING_RUNNING,
         RaceState.GROUP_RACE_RUNNING,
         RaceState.SEMI_RUNNING,
@@ -116,7 +122,7 @@ _RUNNING_STATES = {
 
 class StateMachine:
     def __init__(self) -> None:
-        self._state = RaceState.IDLE
+        self._state = RaceState.REGISTRATION
         self._lock = threading.Lock()  # 线程安全
 
     @property
@@ -163,6 +169,12 @@ def all_running_zones() -> list[tuple[str, StateMachine]]:
     """Return [(zone_id, sm), ...] for all zones currently in a running state."""
     with _zone_registry_lock:
         return [(zid, sm) for zid, sm in _zone_machines.items() if sm.is_running()]
+
+
+def all_zone_ids() -> list[str]:
+    """Return all registered zone IDs."""
+    with _zone_registry_lock:
+        return list(_zone_machines.keys())
 
 
 def remove_zone_sm(zone_id: str) -> None:

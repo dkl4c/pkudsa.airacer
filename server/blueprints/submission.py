@@ -11,6 +11,7 @@ import asyncio
 import base64
 import datetime
 import importlib.util
+import json
 import os
 import pathlib
 import py_compile
@@ -60,28 +61,51 @@ def _verify_password(plain: str, hashed: str) -> bool:
 # Global submission lock (set by admin)
 # ---------------------------------------------------------------------------
 
-submissions_locked: bool = False
+_LOCK_FILE = pathlib.Path(__file__).resolve().parent.parent / "config" / "lock_state.json"
+
+def _load_lock_state() -> bool:
+    try:
+        return json.loads(_LOCK_FILE.read_text())["locked"]
+    except Exception:
+        return False
+
+def _save_lock_state(locked: bool) -> None:
+    _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _LOCK_FILE.write_text(json.dumps({"locked": locked}))
+
+submissions_locked: bool = _load_lock_state()
 
 # ---------------------------------------------------------------------------
 # In-memory test queue
 # ---------------------------------------------------------------------------
 
-_test_queue: list[str] = []
+_test_queue: list[dict] = []
 _test_queue_lock = threading.Lock()
 
 
-def enqueue_test(submission_id: str) -> int:
+def enqueue_test(submission_id: str, test_run_id: int, slot_name: str, team_id: str) -> int:
     with _test_queue_lock:
-        _test_queue.append(submission_id)
+        _test_queue.append({
+            "submission_id": submission_id,
+            "test_run_id": test_run_id,
+            "slot_name": slot_name,
+            "team_id": team_id,
+        })
         return len(_test_queue)
+
+
+def dequeue_test() -> Optional[dict]:
+    """Pop next test task from the queue. Returns None if empty."""
+    with _test_queue_lock:
+        return _test_queue.pop(0) if _test_queue else None
 
 
 def queue_position(submission_id: str) -> Optional[int]:
     with _test_queue_lock:
-        try:
-            return _test_queue.index(submission_id) + 1
-        except ValueError:
-            return None
+        for idx, entry in enumerate(_test_queue):
+            if entry["submission_id"] == submission_id:
+                return idx + 1
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +307,15 @@ async def request_test(body: TestRequest):
             detail=f"slot_name must be one of: {', '.join(VALID_SLOTS)}",
         )
 
+    # 赛程已开始则拒绝测试
+    from server.race.state_machine import all_running_zones
+    running = all_running_zones()
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail=f"赛程已在进行中 ({len(running)} 个赛区)，无法提交测试申请",
+        )
+
     with get_db(DB_PATH) as conn:
         team_row = db_get_team_secure(conn, body.team_id)
 
@@ -313,9 +346,9 @@ async def request_test(body: TestRequest):
                 ),
             )
 
-        queue_pos = enqueue_test(submission["id"])
         queued_at = datetime.datetime.now().isoformat()
-        create_test_run(conn, submission["id"], queued_at)
+        test_run_id = create_test_run(conn, submission["id"], queued_at)
+        queue_pos = enqueue_test(submission["id"], test_run_id, slot, body.team_id)
 
     return {
         "status": "queued",

@@ -198,10 +198,6 @@ def _build_cars(teams_data: list) -> list:
     return cars
 
 
-# In-memory store: session_id → cars list (zone_id stored too)
-_pending_cars: dict[str, list] = {}
-# Track which zone owns which session
-_session_zone: dict[str, str] = {}
 # Track current running session per zone
 _zone_running_session: dict[str, str] = {}
 
@@ -312,15 +308,11 @@ async def zone_set_session(
 
         db_upsert_session(conn, body.session_id, body.session_type, team_ids, total_laps, zone_id)
 
-    # File I/O outside DB transaction
-    cars = _build_cars(teams_data)
-    _pending_cars[body.session_id] = cars
-    _session_zone[body.session_id] = zone_id
     return {
         "status": "ready",
         "session_id": body.session_id,
         "zone_id": zone_id,
-        "cars_count": len(cars),
+        "cars_count": len(teams_data),
     }
 
 
@@ -347,11 +339,13 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
-    cars = _pending_cars.pop(session_id, [])
+    with get_db(DB_PATH) as conn:
+        teams_data = db_get_teams_with_code(conn, row["team_ids"])
+    cars = _build_cars(teams_data)
     if not cars:
         sm.reset()
         raise HTTPException(
-            status_code=409, detail="Car codes missing. Call set-session again."
+            status_code=409, detail="No team code available. Call set-session first."
         )
 
     try:
@@ -555,7 +549,34 @@ async def lock_submissions(_auth=Depends(require_admin)):
     import server.blueprints.submission as sub_module
 
     sub_module.submissions_locked = True
+    sub_module._save_lock_state(True)
+
+    # Transition all zones from REGISTRATION → IDLE
+    from server.race.state_machine import RaceState, all_zone_ids, get_zone_sm
+    for zone_id in all_zone_ids():
+        sm = get_zone_sm(zone_id)
+        if sm.state == RaceState.REGISTRATION:
+            sm.transition(RaceState.IDLE)
+
     return {"status": "locked"}
+
+
+@router.post("/unlock-submissions")
+async def unlock_submissions(_auth=Depends(require_admin)):
+    from server.blueprints.submission import _save_lock_state
+    import server.blueprints.submission as sub_module
+
+    sub_module.submissions_locked = False
+    _save_lock_state(False)
+
+    # Transition all zones from IDLE → REGISTRATION
+    from server.race.state_machine import RaceState, all_zone_ids, get_zone_sm
+    for zone_id in all_zone_ids():
+        sm = get_zone_sm(zone_id)
+        if sm.state == RaceState.IDLE:
+            sm.transition(RaceState.REGISTRATION)
+
+    return {"status": "unlocked"}
 
 
 @router.post("/set-session")
