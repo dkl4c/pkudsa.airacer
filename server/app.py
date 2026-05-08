@@ -21,21 +21,54 @@ from server.database.models import init_db
 async def lifespan(app: FastAPI):
     """
     FastApi生命周期，yield前面为启动时执行，yield后面为关闭时执行
-    启动时：加载或创建数据库，启动心跳和模拟直播任务
+    启动时：加载或创建数据库，恢复赛区状态，启动心跳和模拟直播任务
     关闭时：取消心跳和模拟直播任务
     """
     pathlib.Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     init_db(DB_PATH)
 
+    # Wire state-machine persistence to the database and restore all zone states
+    from server.race.state_machine import get_zone_sm, set_db_path
+
+    set_db_path(DB_PATH)
+    _restore_zone_states()
+
     hb_task = asyncio.create_task(_heartbeat_loop())
     live_task = asyncio.create_task(_sim_live_loop())
+    test_task = asyncio.create_task(_serve_test_queue())
     yield
-    for t in (hb_task, live_task):
+    for t in (hb_task, live_task, test_task):
         t.cancel()
         try:
             await t
         except asyncio.CancelledError:
             pass
+
+
+def _restore_zone_states() -> None:
+    """Pre-load all zone StateMachines from the database so running states
+    are known to the live-poll loop immediately after startup."""
+    import sqlite3
+
+    from server.race.state_machine import RaceState, get_zone_sm
+
+    try:
+        with sqlite3.connect(str(DB_PATH)) as conn:
+            rows = conn.execute("SELECT id, state FROM zones").fetchall()
+    except Exception:
+        return
+
+    for zone_id, state_str in rows:
+        sm = get_zone_sm(zone_id)
+        # If the zone was in a running state at shutdown, reset it to IDLE
+        # (the race engine is gone after restart)
+        try:
+            state = RaceState(state_str)
+        except ValueError:
+            continue
+        if state.value.endswith("_RUNNING"):
+            sm.reset()  # persist to DB
+        # For all other states, get_zone_sm already loaded them from DB
 
 
 """实例化应用"""
@@ -94,6 +127,13 @@ async def _heartbeat_loop() -> None:
 # ---------------------------------------------------------------------------
 # Live telemetry: poll simnode every 3 s for all running zones
 # ---------------------------------------------------------------------------
+
+
+async def _serve_test_queue() -> None:
+    """启动测试队列消费者 worker。"""
+    from server.services.test_worker import _test_worker_loop
+
+    await _test_worker_loop()
 
 
 async def _sim_live_loop() -> None:

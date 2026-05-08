@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS zones (
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     total_laps  INTEGER NOT NULL DEFAULT 3,
+    state       TEXT NOT NULL DEFAULT 'REGISTRATION',
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
 );
 
@@ -80,6 +81,7 @@ _MIGRATIONS = [
     "ALTER TABLE submissions ADD COLUMN slot_name       TEXT NOT NULL DEFAULT 'main'",
     "ALTER TABLE submissions ADD COLUMN is_race_active  INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE race_sessions ADD COLUMN zone_id       TEXT REFERENCES zones(id)",
+    "ALTER TABLE zones       ADD COLUMN state           TEXT NOT NULL DEFAULT 'REGISTRATION'",
 ]
 
 
