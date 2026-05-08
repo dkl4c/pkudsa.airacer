@@ -593,6 +593,8 @@ async def _handle_finished(
     now = datetime.datetime.now().isoformat()
     with get_db(DB_PATH) as conn:
         db_mark_session_finished(conn, session_id, now)
+        from server.database.action import update_race_session as _update_race_session
+        _update_race_session(conn, session_id, result=result)
 
     _zone_running_session.pop(zone_id, None)
     await _broadcast(
@@ -810,7 +812,7 @@ async def close_event(_auth=Depends(require_admin)):
 @router.get("/live-frame/{session_id}")
 async def get_live_frame(session_id: str, _auth=Depends(require_admin)):
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(proxy=None, trust_env=False) as client:
             resp = await client.get(
                 f"{_SIMNODE_URL}/race/{session_id}/frame",
                 timeout=3.0,

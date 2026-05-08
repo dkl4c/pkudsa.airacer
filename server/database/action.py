@@ -596,7 +596,7 @@ def db_get_placement_rankings(conn, zone_id: str) -> list[dict]:
             tid = entry.get("team_id")
             if not tid or tid in seen:
                 continue
-            t = entry.get("best_lap_time")
+            t = entry.get("best_lap_time") or entry.get("best_lap")
             if t is not None:
                 seen.add(tid)
                 rankings.append({"team_id": tid, "best_lap_time": t})
@@ -626,8 +626,11 @@ def db_get_stage_session_results(conn, zone_id: str, stage: str) -> list[dict]:
             rankings.append({
                 "team_id": entry.get("team_id"),
                 "rank": entry.get("rank", 99),
-                "finish_time": entry.get("finish_time") or entry.get("race_time"),
-                "best_lap_time": entry.get("best_lap_time"),
+                "finish_time": (entry.get("finish_time")
+                                or entry.get("race_time")
+                                or entry.get("total_time")),
+                "best_lap_time": (entry.get("best_lap_time")
+                                  or entry.get("best_lap")),
             })
         results.append({"session_id": sid, "rankings": rankings})
     return results

@@ -2,10 +2,15 @@
 Thread-safe state machine for AI Racer competition phases.
 Supports per-zone independent state machines; the module-level
 `state_machine` is kept for backward compatibility (zone "default").
+
+State is persisted to the database on every transition so it survives restarts.
 """
 
+import sqlite3
 import threading
 from enum import Enum
+from pathlib import Path
+from typing import Callable, Optional
 
 
 class RaceState(str, Enum):
@@ -121,9 +126,14 @@ _RUNNING_STATES = {
 
 
 class StateMachine:
-    def __init__(self) -> None:
-        self._state = RaceState.REGISTRATION
+    def __init__(
+        self,
+        initial_state: RaceState = RaceState.REGISTRATION,
+        persist_cb: Optional[Callable[["RaceState"], None]] = None,
+    ) -> None:
+        self._state = initial_state
         self._lock = threading.Lock()  # 线程安全
+        self._persist_cb = persist_cb
 
     @property
     def state(self) -> RaceState:
@@ -139,6 +149,9 @@ class StateMachine:
                     f"Allowed: {sorted(s.value for s in allowed)}"
                 )
             self._state = to
+        # Persist outside the lock to avoid blocking other threads during I/O
+        if self._persist_cb:
+            self._persist_cb(to)
 
     def is_running(self) -> bool:
         with self._lock:
@@ -147,6 +160,52 @@ class StateMachine:
     def reset(self) -> None:
         with self._lock:
             self._state = RaceState.IDLE
+        if self._persist_cb:
+            self._persist_cb(RaceState.IDLE)
+
+
+# ---------------------------------------------------------------------------
+# DB helpers (inline to avoid circular imports)
+# ---------------------------------------------------------------------------
+
+_DB_PATH: Optional[Path] = None
+
+
+def set_db_path(db_path: str | Path) -> None:
+    """Configure the database path used for state persistence."""
+    global _DB_PATH
+    _DB_PATH = Path(db_path)
+
+
+def _db_save_state(zone_id: str, state: RaceState) -> None:
+    """Write zone state to the database (synchronous, called from transition)."""
+    if _DB_PATH is None:
+        return
+    try:
+        with sqlite3.connect(str(_DB_PATH)) as conn:
+            conn.execute(
+                "UPDATE zones SET state = ? WHERE id = ?",
+                (state.value, zone_id),
+            )
+            conn.commit()
+    except Exception:
+        pass  # best-effort; state is still in memory
+
+
+def _db_load_state(zone_id: str) -> Optional[RaceState]:
+    """Read zone state from the database. Returns None if not found."""
+    if _DB_PATH is None or not _DB_PATH.exists():
+        return None
+    try:
+        with sqlite3.connect(str(_DB_PATH)) as conn:
+            row = conn.execute(
+                "SELECT state FROM zones WHERE id = ?", (zone_id,)
+            ).fetchone()
+        if row:
+            return RaceState(row[0])
+    except Exception:
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -158,10 +217,19 @@ _zone_registry_lock = threading.Lock()
 
 
 def get_zone_sm(zone_id: str) -> StateMachine:
-    """Return (creating if necessary) the StateMachine for zone_id."""
+    """Return (creating if necessary) the StateMachine for zone_id.
+
+    On first creation, restores the last-known state from the database.
+    Every subsequent transition is persisted back to the database.
+    """
     with _zone_registry_lock:
         if zone_id not in _zone_machines:
-            _zone_machines[zone_id] = StateMachine()
+            db_state = _db_load_state(zone_id)
+            initial = db_state if db_state is not None else RaceState.REGISTRATION
+            _zone_machines[zone_id] = StateMachine(
+                initial_state=initial,
+                persist_cb=lambda s: _db_save_state(zone_id, s),
+            )
         return _zone_machines[zone_id]
 
 
