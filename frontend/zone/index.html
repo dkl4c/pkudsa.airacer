@@ -102,8 +102,8 @@
       letter-spacing: 0.4px;
       text-transform: uppercase;
     }
-    .phase-badge.qualifying  { background: rgba(255,193,7,0.2);  color: #ffc107;  border: 1px solid rgba(255,193,7,0.4);  }
-    .phase-badge.group_race  { background: rgba(13,202,240,0.2); color: #0dcaf0;  border: 1px solid rgba(13,202,240,0.4); }
+    .phase-badge.placement   { background: rgba(255,193,7,0.2);  color: #ffc107;  border: 1px solid rgba(255,193,7,0.4);  }
+    .phase-badge.group_stage { background: rgba(13,202,240,0.2); color: #0dcaf0;  border: 1px solid rgba(13,202,240,0.4); }
     .phase-badge.semi        { background: rgba(111,66,193,0.2); color: #b97fff;  border: 1px solid rgba(111,66,193,0.4); }
     .phase-badge.final       { background: rgba(255,77,77,0.25); color: #ff6b6b;  border: 1px solid rgba(255,77,77,0.4);  }
     .phase-badge.registration{ background: rgba(40,167,69,0.2);  color: #5ce65c;  border: 1px solid rgba(40,167,69,0.4);  }
@@ -580,6 +580,7 @@
     <div class="collapse navbar-collapse" id="navbarMain">
       <ul class="navbar-nav ms-auto gap-1">
         <li class="nav-item"><a class="nav-link" href="/">首页</a></li>
+        <li class="nav-item"><a class="nav-link" href="/live/">比赛实况</a></li>
         <li class="nav-item"><a class="nav-link active" href="/zone/">赛区</a></li>
         <li class="nav-item"><a class="nav-link" href="/submit/">提交代码</a></li>
         <li class="nav-item"><a class="nav-link" href="/race/">比赛回放</a></li>
@@ -717,23 +718,36 @@
 
 <script>
 // ── Constants ─────────────────────────────────────
-const PHASE_ORDER = ['registration', 'qualifying', 'group_race', 'semi', 'final', 'completed'];
+const PHASE_ORDER = ['registration', 'placement', 'group_stage', 'semi', 'final', 'completed'];
 const PHASE_LABELS = {
-  registration: '报名阶段',
-  qualifying:   '排位赛',
-  group_race:   '分组赛',
-  semi:         '半决赛',
-  final:        '决赛',
-  completed:    '已结束',
+  registration:  '报名阶段',
+  placement:     '排位赛',
+  group_stage:   '分组赛',
+  semi:          '半决赛',
+  final:         '决赛',
+  completed:     '已结束',
 };
 const PHASE_ICONS = {
-  registration: 'bi-pencil-square',
-  qualifying:   'bi-stopwatch',
-  group_race:   'bi-collection',
+  registration:  'bi-pencil-square',
+  placement:     'bi-stopwatch',
+  group_stage:   'bi-collection',
   semi:         'bi-diagram-2',
   final:        'bi-trophy',
   completed:    'bi-check-circle',
 };
+
+// Map detailed backend RaceState values to frontend phase keys
+function stateToPhase(state) {
+  const s = state || '';
+  if (s === 'REGISTRATION') return 'registration';
+  if (s === 'IDLE') return 'idle';
+  if (s.startsWith('PLACEMENT')) return 'placement';
+  if (s.startsWith('GROUP_STAGE')) return 'group_stage';
+  if (s.startsWith('SEMI')) return 'semi';
+  if (s.startsWith('FINAL')) return 'final';
+  if (s === 'CLOSED') return 'completed';
+  return s;
+}
 
 // ── State ─────────────────────────────────────────
 let zoneId = null;
@@ -832,10 +846,11 @@ function renderHeader(data) {
 
   // Phase badge
   const state = data.state || data.phase || data.status || 'unknown';
-  const phaseLabel = PHASE_LABELS[state] || state;
+  const phase = stateToPhase(state);
+  const phaseLabel = PHASE_LABELS[phase] || state;
   const badgeEl = document.getElementById('phase-badge');
-  badgeEl.className = 'phase-badge ' + state;
-  badgeEl.innerHTML = `<i class="bi ${PHASE_ICONS[state] || 'bi-circle'} me-1"></i><span>${escHtml(phaseLabel)}</span>`;
+  badgeEl.className = 'phase-badge ' + phase;
+  badgeEl.innerHTML = `<i class="bi ${PHASE_ICONS[phase] || 'bi-circle'} me-1"></i><span>${escHtml(phaseLabel)}</span>`;
 
   // Team count
   const teams = data.teams || [];
@@ -850,7 +865,8 @@ function renderHeader(data) {
 function renderPhaseFlow(data) {
   const body = document.getElementById('phase-flow-body');
   const state = data.state || data.phase || data.status || 'unknown';
-  const currentIdx = PHASE_ORDER.indexOf(state);
+  const phase = stateToPhase(state);
+  const currentIdx = PHASE_ORDER.indexOf(phase);
 
   const flow = document.createElement('div');
   flow.className = 'phase-flow';
