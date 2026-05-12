@@ -246,6 +246,7 @@ async def _broadcast(
     state: str,
     zone_id: str = "default",
     session_id: Optional[str] = None,
+    session_type: Optional[str] = None,
     pid: Optional[int] = None,
     recording_path: Optional[str] = None,
 ):
@@ -255,6 +256,7 @@ async def _broadcast(
         state,
         zone_id=zone_id,
         session_id=session_id,
+        session_type=session_type,
         webots_pid=pid,
         recording_path=recording_path,
     )
@@ -449,17 +451,17 @@ async def zone_set_session(
         if zone is None:
             raise HTTPException(status_code=404, detail=f"赛区未找到: {zone_id}")
 
-        if body.total_laps is not None:
-            total_laps = body.total_laps
-        else:
-            br = compute_bracket(len(team_ids))
-            total_laps = br["laps_per_stage"].get(body.session_type, zone["total_laps"])
         team_ids = (
             body.team_ids
             if body.team_ids is not None
             else db_get_zone_team_ids(conn, zone_id)
         )
 
+        if body.total_laps is not None:
+            total_laps = body.total_laps
+        else:
+            br = compute_bracket(len(team_ids))
+            total_laps = br["laps_per_stage"].get(body.session_type, zone["total_laps"])
         try:
             teams_data = db_get_teams_with_code(conn, team_ids)
         except ValueError as e:
@@ -480,6 +482,10 @@ async def zone_set_session(
 @router.post("/zones/{zone_id}/start-race")
 async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
     sm = get_zone_sm(zone_id)
+
+    # 报名阶段自动锁定提交，无需手动操作
+    if sm.state == RaceState.REGISTRATION:
+        sm.transition(RaceState.IDLE)
 
     with get_db(DB_PATH) as conn:
         row = db_get_waiting_session(conn, zone_id)
@@ -533,7 +539,7 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
     _zone_running_session[zone_id] = session_id
     asyncio.create_task(_watch_simnode(session_id, session_type, zone_id))
 
-    await _broadcast("running", zone_id=zone_id, session_id=session_id)
+    await _broadcast("running", zone_id=zone_id, session_id=session_id, session_type=session_type)
     return {
         "status": "running",
         "session_id": session_id,

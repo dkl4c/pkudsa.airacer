@@ -125,7 +125,7 @@ async def _heartbeat_loop() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Live telemetry: poll simnode every 3 s for all running zones
+# Live telemetry: poll simnode every 1 s for all running zones
 # ---------------------------------------------------------------------------
 
 
@@ -143,7 +143,7 @@ async def _sim_live_loop() -> None:
     from server.ws.admin import manager
 
     while True:
-        await asyncio.sleep(3)
+        await asyncio.sleep(0.5)
         for zone_id, sm in all_running_zones():
             session_id = _get_running_session_id(zone_id)
             if not session_id:
@@ -153,14 +153,23 @@ async def _sim_live_loop() -> None:
                 # Re-check after blocking call to avoid overwriting a final state
                 if info and sm.is_running():
                     base = manager._last_msg_per_zone.get(zone_id, {})
+                    # Convert cars array to vehicles object {team_id: {...}}
+                    vehicles = {}
+                    for car in info.get("cars", []):
+                        tid = car.get("team_id", "")
+                        vehicles[tid] = {
+                            "lap": car.get("lap"),
+                            "speed": car.get("speed"),
+                            "status": car.get("status"),
+                        }
                     await manager.broadcast(
                         {
                             **base,
                             "type": "sim_status",
                             "zone_id": zone_id,
                             "webots_pid": info.get("webots_pid"),
-                            "sim_time_approx": int(info.get("sim_time") or 0),
-                            "live_cars": info.get("cars", []),
+                            "sim_time": info.get("sim_time") or 0,
+                            "vehicles": vehicles,
                         }
                     )
             except Exception:

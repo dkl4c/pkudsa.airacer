@@ -312,6 +312,10 @@
             .live-card td {
                 border-color: #1e293b !important;
             }
+            /* Vehicle status badges */
+            .badge-state-normal { background: #10b981; color: #fff; }
+            .badge-state-stopped { background: #f59e0b; color: #fff; }
+            .badge-state-disqualified { background: #ef4444; color: #fff; }
 
             @media (max-width: 768px) {
                 .admin-sidebar {
@@ -1203,6 +1207,7 @@
             var _ws = null;
             var _standingsTmr = null;
             var _overheadTmr = null;
+            var _currentSid = "";   // 原始完整 session ID，用于摄像头 API
 
             /* ================================================================
    AUTH HELPER
@@ -1566,6 +1571,11 @@
                 }
             }
 
+            var VEHICLE_STATUS = {
+                normal: "正常行驶",
+                stopped: "罚停",
+                disqualified: "违规出局",
+            };
             var STAGE_NAMES = {
                 placement: "排位赛",
                 group_stage: "分组赛",
@@ -1763,15 +1773,14 @@
                     sb.textContent = msg.state || "--";
                 }
 
-                setText("live-session-id", msg.session_id || "--");
+                _currentSid = msg.session_id || "";
+                setText("live-session-id", truncateSid(msg.session_id) || "--");
                 setText(
                     "live-sim-time",
                     msg.sim_time != null ? msg.sim_time.toFixed(1) + "s" : "--",
                 );
-                setText(
-                    "live-stage",
-                    msg.session_type || msg.current_stage || "--",
-                );
+                var stage = msg.session_type || msg.current_stage;
+                setText("live-stage", STAGE_NAMES[stage] || stage || "--");
                 setText(
                     "live-vehicle-count",
                     msg.vehicles ? Object.keys(msg.vehicles).length : "--",
@@ -1813,6 +1822,8 @@
                     .map(function (e) {
                         var tid = e[0],
                             v = e[1];
+                        var st = v.status || "normal";
+                        var stLabel = VEHICLE_STATUS[st] || st;
                         return (
                             "<tr>" +
                             "<td>" +
@@ -1825,9 +1836,9 @@
                             (v.speed != null ? v.speed.toFixed(1) : "--") +
                             "</td>" +
                             '<td><span class="badge badge-state-' +
-                            (v.status || "idle").toLowerCase() +
+                            st +
                             '">' +
-                            (v.status || "--") +
+                            stLabel +
                             "</span></td>" +
                             "</tr>"
                         );
@@ -1846,16 +1857,12 @@
             }
 
             async function pollOverhead() {
-                if (!currentZone) return;
-                var sid = (
-                    document.getElementById("live-session-id").textContent || ""
-                ).trim();
-                if (!sid || sid === "--") return;
+                if (!currentZone || !_currentSid || _currentSid === "--") return;
                 var img = document.getElementById("live-overhead-img");
                 if (!img) return;
                 try {
                     var r = await fetch(
-                        "/api/admin/live-frame/" + encodeURIComponent(sid),
+                        "/api/admin/live-frame/" + encodeURIComponent(_currentSid),
                         { headers: authHdr(), cache: "no-store" },
                     );
                     if (!r.ok) return;
@@ -2341,6 +2348,12 @@
             function setText(id, val) {
                 var el = document.getElementById(id);
                 if (el) el.textContent = val;
+            }
+            function truncateSid(sid) {
+                if (!sid) return sid;
+                // Keep at most 16 chars
+                if (sid.length <= 16) return sid;
+                return sid.slice(0, 8) + ".." + sid.slice(-6);
             }
             function esc(s) {
                 return String(s)
