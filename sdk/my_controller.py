@@ -1,189 +1,412 @@
-"""OpenCV-based controller used as sdk/my_controller.py.
-
-This implementation mirrors the tutorial example in
-`sdk/examples/team_controller_tutorial.py` and provides a simple,
-efficient lane follower + obstacle avoidance using `cv2`.
+"""
+=============================================================================
+  立体视觉汽车控制器 — 赛道颜色分割 + PID 版本
+=============================================================================
+  使用赛道区域颜色（暗色）阈值分割 + 矩重心找赛道中心，
+  再通过 PID 计算转向，对直道和弯道均有良好鲁棒性。
 """
 
 from __future__ import annotations
 
-try:
-    import cv2
-    HAVE_CV2 = True
-except Exception:
-    cv2 = None
-    HAVE_CV2 = False
+import math
+from typing import Optional, Tuple
 
+import cv2
 import numpy as np
 
-# Image params
-IMG_H, IMG_W = 480, 640
-ROI_TOP = int(IMG_H * 0.55)
-ROI_BOT = int(IMG_H * 0.95)
 
-# Controller params
-KP, KI, KD = 1.2, 0.0, 0.35
-# Increased base speed and lowered minimum to allow faster cruising
-BASE_SPEED = 0.85
-MIN_SPEED = 0.25
-# Reduce turn penalty so steering doesn't force excessive slow-down
-SPEED_TURN_PENALTY = 0.7
-STEER_CLAMP = 1.0
+# ═══════════════════════════ 参数配置区 ══════════════════════════════════
 
-# Obstacle detection
-OBS_S_MIN = 0.35
-OBS_V_MIN = 40
-OBS_MIN_PIXELS = 180
-OBS_EMERGENCY = 2500
-OBS_AVOID_GAIN = 0.9
+# --- 摄像头 ---
+LEFT_CAMERA_NAME: str = "left_camera"
+RIGHT_CAMERA_NAME: str = "right_camera"
+CAMERA_WIDTH: int = 640
+CAMERA_HEIGHT: int = 480
+CAMERA_FOV: float = 1.3
 
-# LPF
-STEER_ALPHA = 0.65
+# --- ROI: 只看图像中部水平带，减少天空/车身干扰 ---
+ROI_TOP: int = int(CAMERA_HEIGHT * 0.50)    # ROI 顶部行
+ROI_BOT: int = int(CAMERA_HEIGHT * 0.95)    # ROI 底部行
 
-_state = {"prev_error": 0.0, "integral": 0.0, "prev_t": None, "steer_lpf": 0.0}
+# --- 赛道颜色阈值（深色赛道，背景较亮）---
+# 低于此灰度值的像素被认为是赛道
+TRACK_THRESHOLD: int = 80
+# 检测有效所需的最小赛道像素数
+MIN_TRACK_PIXELS: int = 200
+
+# --- PID 参数 ---
+KP: float = 1.4      # 比例系数
+KI: float = 0.0      # 积分系数（直道容易飘，保持0）
+KD: float = 0.4      # 微分系数（抑制振荡）
+
+# --- 速度控制 ---
+BASE_SPEED: float = 15.0      # 基础速度 (km/h)
+MIN_SPEED: float = 5.0        # 最小速度 (km/h)
+MAX_SPEED: float = 25.0       # 最大速度 (km/h)
+SPEED_TURN_PENALTY: float = 0.8  # 转弯速度衰减系数
+
+# --- 转向控制 ---
+MAX_STEER_ANGLE: float = 0.85  # 最大转向角度（弧度）
+STEER_CLAMP: float = 1.0       # 转向归一化上限
+STEER_ALPHA: float = 0.55      # 转向低通滤波系数（越大越平滑）
+
+# --- 转向灯 ---
+SIGNAL_THRESHOLD: float = 0.25
 
 
-def _reset_state() -> None:
-    """Reset internal PID / filter state (used by smoke tests)."""
-    _state["prev_error"] = 0.0
-    _state["integral"] = 0.0
-    _state["prev_t"] = None
-    _state["steer_lpf"] = 0.0
+# ═══════════════════════════ 图像处理函数 ═════════════════════════════════
+
+def camera_to_bgr(camera) -> Optional[np.ndarray]:
+    """将 Webots 摄像头图像转换为 OpenCV BGR 格式。"""
+    width = camera.getWidth()
+    height = camera.getHeight()
+    image = camera.getImage()
+    if image is None:
+        return None
+    buffer = np.frombuffer(image, np.uint8).reshape((height, width, 4))
+    return cv2.cvtColor(buffer, cv2.COLOR_BGRA2BGR)
 
 
-def _estimate_lane_center_cv(bgr: np.ndarray) -> float | None:
+def _track_center_x(bgr: np.ndarray) -> Optional[float]:
+    """
+    用暗色阈值分割 + 矩重心计算赛道中心 x 坐标。
+
+    对直道和弯道都有效，不依赖直线检测。
+    返回：赛道中心像素坐标，检测失败返回 None。
+    """
     roi = bgr[ROI_TOP:ROI_BOT]
-    if HAVE_CV2:
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, th = cv2.threshold(blur, 90, 255, cv2.THRESH_BINARY_INV)
-        th = cv2.morphologyEx(th, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-        m = cv2.moments(th)
-        if m["m00"] < 50:
-            return None
-        cx = m["m10"] / m["m00"]
-        return float(cx)
-    else:
-        gray = roi.mean(axis=2)
-        th = gray < 90
-        col_hits = th.sum(axis=0)
-        if col_hits.sum() < 50:
-            return None
-        xs = np.arange(IMG_W)
-        cx = float((xs * col_hits).sum() / col_hits.sum())
-        return cx
-
-
-def _detect_obstacle_cv(bgr: np.ndarray) -> tuple[int, float] | None:
-    roi = bgr[int(IMG_H * 0.4):int(IMG_H * 0.9)]
-    if HAVE_CV2:
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
-        s = s.astype(np.float32) / 255.0
-        v = v.astype(np.float32)
-        mask = (s > OBS_S_MIN) & (v > OBS_V_MIN)
-    else:
-        arr = roi.astype(np.float32)
-        v = arr.max(axis=2)
-        mn = arr.min(axis=2)
-        sat = np.where(v > 1e-3, (v - mn) / np.maximum(v, 1e-3), 0.0)
-        mask = (sat > OBS_S_MIN) & (v > OBS_V_MIN)
-    cnt = int(mask.sum())
-    if cnt < OBS_MIN_PIXELS:
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, th = cv2.threshold(blur, TRACK_THRESHOLD, 255, cv2.THRESH_BINARY_INV)
+    # 形态学开运算除噪点
+    kernel = np.ones((5, 5), np.uint8)
+    th = cv2.morphologyEx(th, cv2.MORPH_OPEN, kernel)
+    m = cv2.moments(th)
+    if m["m00"] < MIN_TRACK_PIXELS:
         return None
-    cols = mask.sum(axis=0)
-    if cols.sum() == 0:
-        return None
-    xs = np.arange(IMG_W)
-    cx = float((xs * cols).sum() / cols.sum())
-    cx_norm = (cx - IMG_W / 2) / (IMG_W / 2)
-    return cnt, cx_norm
+    return float(m["m10"] / m["m00"])
 
 
-def control(left_img: np.ndarray, right_img: np.ndarray, timestamp: float) -> tuple[float, float]:
-    cx = _estimate_lane_center_cv(left_img)
-    if cx is None:
-        return 0.0, 0.15
+def _estimate_center_error(
+    left_bgr: Optional[np.ndarray],
+    right_bgr: Optional[np.ndarray],
+) -> Optional[float]:
+    """
+    融合左右摄像头检测赛道中心，返回归一化偏差 error。
 
-    lane_error = (cx - IMG_W / 2) / (IMG_W / 2)
-    obs = _detect_obstacle_cv(left_img)
-    error = lane_error
-    emergency = False
-    if obs is not None:
-        cnt, obs_x = obs
-        centrality = max(0.0, 1.0 - abs(obs_x))
-        # prefer steering away from the obstacle; if obstacle near center,
-        # pick the side opposite the current lane error so we steer around it
-        if abs(obs_x) > 0.05:
-            avoid_dir = -np.sign(obs_x)
-        else:
-            avoid_dir = -np.sign(lane_error) if lane_error != 0 else 1.0
-        proximity = min(1.0, cnt / 2000.0)
-        offset = OBS_AVOID_GAIN * avoid_dir * centrality * proximity
-        error = float(np.clip(lane_error + offset, -1.5, 1.5))
-        if cnt >= OBS_EMERGENCY:
-            emergency = True
+    error > 0: 赛道中心在画面右侧，需右转
+    error < 0: 赛道中心在画面左侧，需左转
+    """
+    cx_l = _track_center_x(left_bgr) if left_bgr is not None else None
+    cx_r = _track_center_x(right_bgr) if right_bgr is not None else None
 
-    prev_t = _state["prev_t"]
-    dt = 0.032 if prev_t is None else max(1e-3, timestamp - prev_t)
-    derivative = (error - _state["prev_error"]) / dt
-    derivative = float(np.clip(derivative, -8.0, 8.0))
-    _state["integral"] += error * dt
-    _state["integral"] = float(np.clip(_state["integral"], -1.0, 1.0))
-
-    steering_raw = KP * error + KI * _state["integral"] + KD * derivative
-    if emergency:
-        # In emergency, force a full steer away from obstacle. If obstacle
-        # is nearly centered, choose the side away from lane_error.
-        if abs(obs_x) > 0.02:
-            steering_raw = -np.sign(obs_x) * STEER_CLAMP
-        else:
-            steering_raw = -np.sign(lane_error) * STEER_CLAMP if lane_error != 0 else STEER_CLAMP
-
-    steer_lpf = STEER_ALPHA * steering_raw + (1 - STEER_ALPHA) * _state["steer_lpf"]
-    steering = float(np.clip(steer_lpf, -STEER_CLAMP, STEER_CLAMP))
-
-    if emergency:
-        speed = 0.18
+    if cx_l is not None and cx_r is not None:
+        cx = (cx_l + cx_r) / 2.0
+    elif cx_r is not None:
+        cx = cx_r          # 优先用向前的右摄像头
+    elif cx_l is not None:
+        cx = cx_l
     else:
-        speed = BASE_SPEED * (1.0 - SPEED_TURN_PENALTY * abs(steering))
-        speed = float(np.clip(speed, MIN_SPEED, 1.0))
+        return None
 
-    _state["prev_error"] = error
-    _state["prev_t"] = timestamp
-    _state["steer_lpf"] = steering
+    return float((cx - CAMERA_WIDTH / 2.0) / (CAMERA_WIDTH / 2.0))
 
-    return steering, speed
+
+def clamp(value: float, min_v: float, max_v: float) -> float:
+    """将值限制在 [min_v, max_v] 范围内。"""
+    return float(max(min_v, min(max_v, value)))
+
+
+# 兼容旧接口的占位函数（不再被主要逻辑使用）
+def frame_has_lane_features(frame: Optional[np.ndarray]) -> bool:
+    return frame is not None
+
+
+def combine_offsets(lo: float, lc: float, ro: float, rc: float) -> float:
+    total = lc + rc
+    return float((lo * lc + ro * rc) / total) if total > 0 else 0.0
+
+
+# ═══════════════════════════ PID 全局状态 ════════════════════════════════
+
+_pid_prev_error: float = 0.0
+_pid_integral: float = 0.0
+_pid_steer_lpf: float = 0.0
+
+
+# ═══════════════════════════ 控制逻辑 ════════════════════════════════════
+
+def decide_speed(steering: float, confidence: float) -> float:
+    """根据转向幅度决定速度，转弯越急速度越低。"""
+    speed = BASE_SPEED * (1.0 - SPEED_TURN_PENALTY * abs(steering))
+    return clamp(speed, MIN_SPEED, MAX_SPEED)
+
+
+def decide_turn_signal(steering: float) -> str:
+    if steering < -SIGNAL_THRESHOLD:
+        return "left"
+    if steering > SIGNAL_THRESHOLD:
+        return "right"
+    return "off"
+
+
+def compute_control(
+    left_frame: Optional[np.ndarray],
+    right_frame: Optional[np.ndarray],
+    prev_left_gray: Optional[np.ndarray],
+    prev_right_gray: Optional[np.ndarray],
+    filtered_offset: float,
+    filtered_conf: float,
+    last_steering: float,
+) -> Tuple[float, float, str, Optional[np.ndarray], Optional[np.ndarray], float, float, float]:
+    """
+    核心控制函数（PID + 赛道颜色分割）。
+    保持返回值签名不变以兼容 run() 和 control()。
+    """
+    global _pid_prev_error, _pid_integral, _pid_steer_lpf
+
+    # 检测赛道中心偏差
+    error = _estimate_center_error(left_frame, right_frame)
+
+    if error is None:
+        # 检测失败：保持上一帧转向缓慢衰减
+        steering = last_steering * 0.85
+        speed = decide_speed(steering, 0.0)
+        signal = decide_turn_signal(steering)
+        new_lg = prev_left_gray
+        new_rg = prev_right_gray
+        return (steering, speed, signal, new_lg, new_rg,
+                filtered_offset, filtered_conf, steering)
+
+    # PID 计算（固定 dt=0.032s，约 30Hz）
+    dt = 0.032
+    derivative = float(np.clip((error - _pid_prev_error) / dt, -8.0, 8.0))
+    _pid_integral = float(np.clip(_pid_integral + error * dt, -1.0, 1.0))
+
+    steering_raw = KP * error + KI * _pid_integral + KD * derivative
+    steering_raw = float(np.clip(steering_raw, -STEER_CLAMP, STEER_CLAMP))
+
+    # 低通滤波
+    _pid_steer_lpf = STEER_ALPHA * steering_raw + (1.0 - STEER_ALPHA) * _pid_steer_lpf
+    steering = float(np.clip(_pid_steer_lpf, -STEER_CLAMP, STEER_CLAMP))
+
+    speed = decide_speed(steering, 1.0)
+    signal = decide_turn_signal(steering)
+
+    _pid_prev_error = error
+
+    new_lg = cv2.cvtColor(left_frame, cv2.COLOR_BGR2GRAY) if left_frame is not None else prev_left_gray
+    new_rg = cv2.cvtColor(right_frame, cv2.COLOR_BGR2GRAY) if right_frame is not None else prev_right_gray
+
+    return (steering, speed, signal, new_lg, new_rg,
+            filtered_offset, filtered_conf, steering)
+
+
+# ═══════════════════════════ Webots 设备初始化和主循环 ═══════════════════
+
+def get_device(robot, names):
+    for name in names:
+        try:
+            dev = robot.getDevice(name)
+        except Exception:
+            dev = None
+        if dev is not None:
+            return dev
+    return None
+
+
+def set_indicator_with_driver(driver, signal: str) -> bool:
+    set_indicator = getattr(driver, "setIndicator", None)
+    if set_indicator is None:
+        return False
+    left_const = getattr(driver, "INDICATOR_LEFT", None)
+    right_const = getattr(driver, "INDICATOR_RIGHT", None)
+    off_const = getattr(driver, "INDICATOR_OFF", None)
+    if left_const is None or right_const is None or off_const is None:
+        return False
+    try:
+        if signal == "left":
+            set_indicator(left_const)
+        elif signal == "right":
+            set_indicator(right_const)
+        else:
+            set_indicator(off_const)
+    except (AttributeError, RuntimeError):
+        return False
+    return True
+
+
+def init_indicator_leds(robot):
+    left_led = get_device(robot, ["left_indicator", "left_signal", "left_blinker", "indicator_left"])
+    right_led = get_device(robot, ["right_indicator", "right_signal", "right_blinker", "indicator_right"])
+    return left_led, right_led
+
+
+def set_indicator_with_leds(left_led, right_led, signal: str) -> None:
+    if left_led is None and right_led is None:
+        return
+    left_val = 1.0 if signal == "left" else 0.0
+    right_val = 1.0 if signal == "right" else 0.0
+    if left_led is not None:
+        left_led.set(left_val)
+    if right_led is not None:
+        right_led.set(right_val)
+
+
+def run() -> None:
+    """主函数：初始化 Webots 设备并进入控制循环。"""
+    try:
+        from vehicle import Driver  # type: ignore
+        driver = Driver()
+        robot = driver
+        use_driver = True
+        print("[Controller] 使用 Driver API")
+    except Exception:
+        from controller import Robot  # type: ignore
+        driver = Robot()
+        robot = driver
+        use_driver = False
+        print("[Controller] 使用 Robot API")
+
+    timestep = int(robot.getBasicTimeStep())
+
+    left_camera = get_device(robot, [LEFT_CAMERA_NAME])
+    right_camera = get_device(robot, [RIGHT_CAMERA_NAME])
+
+    if left_camera is None and right_camera is None:
+        raise RuntimeError("未找到摄像头！请确保 PROTO 文件中配置了 left_camera 和 right_camera。")
+
+    if left_camera is not None:
+        left_camera.enable(timestep)
+        print(f"[Controller] 左摄像头已启用: {LEFT_CAMERA_NAME}")
+    if right_camera is not None:
+        right_camera.enable(timestep)
+        print(f"[Controller] 右摄像头已启用: {RIGHT_CAMERA_NAME}")
+
+    gps = get_device(robot, ["gps", "GPS"])
+    if gps is not None:
+        gps.enable(timestep)
+
+    compass = get_device(robot, ["compass", "Compass"])
+    if compass is not None:
+        compass.enable(timestep)
+
+    left_motor = right_motor = None
+    fl_steer = fr_steer = None
+
+    if not use_driver:
+        try:
+            left_motor = robot.getDevice("left_motor")
+            right_motor = robot.getDevice("right_motor")
+            fl_steer = robot.getDevice("fl_steer")
+            fr_steer = robot.getDevice("fr_steer")
+            for motor in (left_motor, right_motor):
+                if motor is not None:
+                    motor.setPosition(float("inf"))
+                    motor.setVelocity(0.0)
+        except Exception:
+            left_motor = right_motor = None
+        fl_steer = fr_steer = None
+
+    left_indicator_led, right_indicator_led = (None, None)
+    if not use_driver:
+        left_indicator_led, right_indicator_led = init_indicator_leds(robot)
+
+    prev_left_gray: Optional[np.ndarray] = None
+    prev_right_gray: Optional[np.ndarray] = None
+    filtered_offset: float = 0.0
+    filtered_conf: float = 0.0
+    last_steering: float = 0.0
+
+    print("[Controller] 初始化完成，进入控制循环...")
+
+    while (driver.step() if use_driver else robot.step(timestep)) != -1:
+        left_frame = camera_to_bgr(left_camera) if left_camera is not None else None
+        right_frame = camera_to_bgr(right_camera) if right_camera is not None else None
+
+        if left_frame is None and right_frame is None:
+            continue
+
+        (
+            steering, speed, signal,
+            prev_left_gray, prev_right_gray,
+            filtered_offset, filtered_conf, last_steering,
+        ) = compute_control(
+            left_frame, right_frame,
+            prev_left_gray, prev_right_gray,
+            filtered_offset, filtered_conf, last_steering,
+        )
+
+        steer_angle = clamp(steering * MAX_STEER_ANGLE, -MAX_STEER_ANGLE, MAX_STEER_ANGLE)
+
+        if use_driver:
+            driver.setCruisingSpeed(speed)
+            driver.setSteeringAngle(steer_angle)
+            if not set_indicator_with_driver(driver, signal):
+                set_indicator_with_leds(left_indicator_led, right_indicator_led, signal)
+        else:
+            if fl_steer is not None:
+                fl_steer.setPosition(steer_angle)
+            if fr_steer is not None:
+                fr_steer.setPosition(steer_angle)
+            if left_motor is not None and right_motor is not None:
+                wheel_speed = clamp(speed / MAX_SPEED, 0.0, 1.0)
+                base = 8000.0 * wheel_speed
+                diff = steering * 4000.0
+                left_motor.setVelocity(base + diff)
+                right_motor.setVelocity(base - diff)
+            set_indicator_with_leds(left_indicator_led, right_indicator_led, signal)
+
+    print("[Controller] 控制循环结束")
+
+
+# ═══════════════════════════ SDK 沙箱入口 ════════════════════════════════
+
+_state: dict = {
+    "filtered_offset": 0.0,
+    "filtered_conf": 0.0,
+    "last_steering": 0.0,
+    "prev_left_gray": None,
+    "prev_right_gray": None,
+}
+
+
+def control(
+    left_img: np.ndarray,
+    right_img: np.ndarray,
+    timestamp: float,
+) -> tuple:
+    """
+    SDK 沙箱入口函数（必须定义，不可改签名）。
+
+    参数:
+        left_img:  左摄像头图像 (480, 640, 3), uint8, BGR
+        right_img: 右摄像头图像 (480, 640, 3), uint8, BGR
+        timestamp: 当前时间戳（秒）
+
+    返回:
+        (steering, speed)
+            steering in [-1, 1]  负值左转，正值右转
+            speed    in [0, 1]   归一化速度
+    """
+    s = _state
+
+    left_frame = left_img if (left_img is not None and left_img.size > 0) else None
+    right_frame = right_img if (right_img is not None and right_img.size > 0) else None
+
+    (
+        steering, speed, _signal,
+        s["prev_left_gray"], s["prev_right_gray"],
+        s["filtered_offset"], s["filtered_conf"], s["last_steering"],
+    ) = compute_control(
+        left_frame, right_frame,
+        s["prev_left_gray"], s["prev_right_gray"],
+        s["filtered_offset"], s["filtered_conf"], s["last_steering"],
+    )
+
+    speed_normalized = clamp(speed / MAX_SPEED, 0.0, 1.0)
+    return float(steering), float(speed_normalized)
 
 
 if __name__ == "__main__":
-    # simple smoke tests
-    blank = np.zeros((IMG_H, IMG_W, 3), dtype=np.uint8)
-    print("blank ->", control(blank, blank, 0.0))
-    img = np.full((IMG_H, IMG_W, 3), 200, dtype=np.uint8)
-    img[:, 120:200, :] = 20
-    print("left lane ->", control(img, img, 0.032))
-    img = np.full((IMG_H, IMG_W, 3), 130, dtype=np.uint8)
-    img[:, 300:340, :] = 20
-    img[200:360, 280:360, 0] = 255
-    img[200:360, 280:360, 1] = 200
-    img[200:360, 280:360, 2] = 0
-    print("center lane + obs ->", control(img, img, 0.032))
-    _reset_state()
-    img = np.full((IMG_H, IMG_W, 3), 130, dtype=np.uint8)
-    img[:, 300:340, :] = 20
-    img[200:360, 80:180, 0] = 255
-    img[200:360, 80:180, 1] = 200
-    img[200:360, 80:180, 2] = 0
-    s, v = control(img, img, 0.032)
-    print(f"lane-center + obs-L   → steering={s:+.3f} speed={v:.3f}   (应为正，向右避)")
-
-    # 6) 障碍偏右：应向左避让
-    _reset_state()
-    img = np.full((IMG_H, IMG_W, 3), 130, dtype=np.uint8)
-    img[:, 300:340, :] = 20
-    img[200:360, 460:560, 0] = 255
-    img[200:360, 460:560, 1] = 200
-    img[200:360, 460:560, 2] = 0
-    s, v = control(img, img, 0.032)
-    print(f"lane-center + obs-R   → steering={s:+.3f} speed={v:.3f}   (应为负，向左避)")
+    run()
