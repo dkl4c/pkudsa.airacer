@@ -1,73 +1,129 @@
-"""A simple example controller that students can run locally.
+"""A robust example controller that keeps the car near the road centre.
 
-This controller is intentionally lightweight and uses only NumPy so it will
-work in environments without OpenCV. It provides a basic center-of-brightness
-steering heuristic and a speed that decreases with sharper turns.
+Uses both cameras but guards against contradictory readings (e.g. one camera
+seeing the lane while the other picks up a guardrail reflection).
 
-The function `control(left_img, right_img, timestamp)` matches the required
-interface used by the sandbox runner.
+Pure NumPy — no OpenCV dependency.
 """
 
-from typing import Tuple
+from typing import Optional, Tuple
 import numpy as np
 
 
 IMG_H, IMG_W = 480, 640
 
+# ── Road ROI ───────────────────────────────────────────────────────────
+ROI_TOP = int(IMG_H * 0.55)
+ROI_BOT = int(IMG_H * 0.88)
 
-def _brightness_center(img: np.ndarray) -> float:
-    """Return x-coordinate of brightness centre (0..IMG_W-1).
+# ── White detection ────────────────────────────────────────────────────
+BRIGHT_MIN = 165
+SAT_MAX    = 35
+MIN_PX     = 80
 
-    img: uint8 BGR image (H, W, 3)
+# ── Steering memory & rate limiting ────────────────────────────────────
+_steer_memory: float = 0.0
+MAX_STEER_CHANGE = 0.18   # max change per frame (prevents sudden flips)
+
+
+def _lane_offset(bgr: np.ndarray) -> Optional[float]:
+    """Normalised horizontal offset of white pixels (−1=left … +1=right).
+
+    Returns None when lane is invisible in this camera.
+    Also returns None when white pixels are spread too wide (likely noise).
     """
-    # Convert to grayscale by average of channels — cheap and effective here
-    gray = img.mean(axis=2)
-    # Column sums -> brightness per x
-    col = gray.sum(axis=0)
-    xs = np.arange(col.shape[0])
+    roi = bgr[ROI_TOP:ROI_BOT, :, :]
+    v = roi.max(axis=2)
+    spread = v - roi.min(axis=2)
+    white = (v >= BRIGHT_MIN) & (spread <= SAT_MAX)
+
+    col = white.sum(axis=0).astype(np.float64)
     total = col.sum()
-    if total == 0:
-        return IMG_W / 2
+    if total < MIN_PX:
+        return None
+
+    xs = np.arange(IMG_W, dtype=np.float64)
     cx = (xs * col).sum() / total
-    return float(cx)
+
+    # Reject if the white blob is too spread out (std > 120 px → noise)
+    var = (xs * xs * col).sum() / total - cx * cx
+    if var > 120.0 * 120.0:
+        return None
+
+    return float((cx - IMG_W / 2.0) / (IMG_W / 2.0))
 
 
-def control(left_img: np.ndarray, right_img: np.ndarray, timestamp: float) -> Tuple[float, float]:
-    """Compute steering and speed from stereo frames.
+def control(
+    left_img: np.ndarray,
+    right_img: np.ndarray,
+    timestamp: float,
+) -> Tuple[float, float]:
+    """Keep the car centred using both cameras.
 
-    A simple heuristic: compute brightness centres in the left and right cams,
-    average them to estimate track center, compute normalized error, and map
-    that to steering. Speed is reduced when steering magnitude is large.
+    When both cameras agree on direction, their average drives steering.
+    When they disagree, only the camera that agrees with the current
+    steering direction is trusted (prevents guardrail-induced flips).
     """
-    # Defensive shape checks — use explicit `if` instead of `assert` because
-    # Python started with `-O` optimises `assert` away. Return a safe stop
-    # when the image shape is unexpected.
-    if (left_img.shape != (IMG_H, IMG_W, 3)
-            or right_img.shape != (IMG_H, IMG_W, 3)):
+    global _steer_memory
+
+    if right_img.shape != (IMG_H, IMG_W, 3):
         return 0.0, 0.0
 
     try:
-        cx_l = _brightness_center(left_img)
-        cx_r = _brightness_center(right_img)
-        cx = 0.5 * (cx_l + cx_r)
+        off_l = _lane_offset(left_img)
+        off_r = _lane_offset(right_img)
 
-        err = (cx - (IMG_W / 2)) / (IMG_W / 2)  # normalized: -1..1
-        # steering: negative -> turn left, positive -> turn right
-        steering = float(np.clip(err * 0.9, -1.0, 1.0))
+        # ── Build candidate list ────────────────────────────────────
+        candidates = []
+        if off_l is not None:
+            candidates.append(off_l)
+        if off_r is not None:
+            candidates.append(off_r)
 
-        # simple speed policy: slow down on sharp turns
-        base_speed = 0.7
-        speed = float(max(0.0, min(1.0, base_speed * (1.0 - abs(steering)))))
+        if len(candidates) == 2:
+            # Two readings — check for disagreement
+            if candidates[0] * candidates[1] < -0.04:
+                # Opposite signs: only keep the one whose sign matches the
+                # current steering or is closer to frame centre
+                use_l = abs(candidates[0]) <= abs(candidates[1])
+                if abs(_steer_memory) > 0.05:
+                    if (candidates[0] * _steer_memory) > (candidates[1] * _steer_memory):
+                        use_l = True
+                    else:
+                        use_l = False
+                if use_l:
+                    candidates = [candidates[0]]
+                else:
+                    candidates = [candidates[1]]
+
+        if len(candidates) >= 1:
+            target = float(np.clip(candidates[0] * 2.2, -1.0, 1.0))
+            trust = 0.9 if len(candidates) == 2 else 0.7
+        else:
+            target = _steer_memory * 0.85 + (-0.08) * 0.15
+            target = float(np.clip(target, -1.0, 1.0))
+            trust = 0.3
+
+        raw_steer = _steer_memory * (1.0 - trust * 0.70) + target * (trust * 0.70)
+
+        # ── Rate-limit steering changes ─────────────────────────────
+        delta = raw_steer - _steer_memory
+        if abs(delta) > MAX_STEER_CHANGE:
+            delta = MAX_STEER_CHANGE * (1.0 if delta > 0 else -1.0)
+        steering = _steer_memory + delta
+
+        steering = float(np.clip(steering, -1.0, 1.0))
+        _steer_memory = steering
+
+        speed = 0.85 * (1.0 - 0.45 * abs(steering))
+        speed = float(max(0.30, min(0.95, speed)))
     except Exception:
-        # On any failure, be safe: stop
         steering, speed = 0.0, 0.0
 
     return steering, speed
 
 
 if __name__ == "__main__":
-    # Quick smoke test: create blank frames and call control
     l = np.zeros((IMG_H, IMG_W, 3), dtype=np.uint8)
     r = np.zeros((IMG_H, IMG_W, 3), dtype=np.uint8)
     print(control(l, r, 0.0))
-
