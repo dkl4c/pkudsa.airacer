@@ -25,7 +25,7 @@ PROTO CarShadow [
       children [
         Camera {
           translation 0.06 0.08 0.25
-          rotation 0 1 0 0.3
+          rotation 0 1 0 0.2
           name "right_camera"
           fieldOfView 1.047
           width 640
@@ -34,7 +34,7 @@ PROTO CarShadow [
         }
         Camera {
           translation -0.06 0.08 0.25
-          rotation 0 1 0 0.3
+          rotation 0 1 0 0.2
           name "left_camera"
           fieldOfView 1.047
           width 640
