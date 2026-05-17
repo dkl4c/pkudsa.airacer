@@ -332,6 +332,7 @@ html, body {
 .status-dq       { background: #e5e7eb; color: #6b7280; }
 .status-stopped  { background: var(--warning); color: #1a1a1a; }
 .status-finished { background: var(--success); color: #fff; }
+.status-idle     { background: #f3f4f6; color: #9ca3af; }
 
 /* Controls bar */
 #controls {
@@ -843,6 +844,7 @@ async function loadAndPlay(sessionId) {
   document.getElementById('event-log').textContent = '暂无事件';
   document.getElementById('leaderboard-panel').innerHTML =
     '<div class="lb-header">排行榜</div><div style="color:#9ca3af;padding:1.5rem 0;text-align:center;font-size:.82rem">加载中...</div>';
+
   removePreviousErrors();
   removeFinalBtn();
 

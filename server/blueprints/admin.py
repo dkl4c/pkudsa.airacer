@@ -696,16 +696,20 @@ async def _handle_finished(
 
         _update_race_session(conn, session_id, result=result)
 
-        # Write race points for each team from final_rankings
+        # Write race points ONLY for cars that finished the race
         final_rankings = result.get("final_rankings", [])
+        finished_rank = 1
         for entry in final_rankings:
-            rank = entry.get("rank", 99)
             team_id = entry.get("team_id")
-            if team_id:
-                points = _POINTS_TABLE.get(rank, 1)
+            if not team_id:
+                continue
+            # 只给完赛的小车发放积分（total_time 不为 None）
+            if entry.get("total_time") is not None:
+                points = _POINTS_TABLE.get(finished_rank, 1)
                 from server.database.action import upsert_race_points as _upsert_rp
-                _upsert_rp(conn, session_id, team_id, rank, points,
+                _upsert_rp(conn, session_id, team_id, finished_rank, points,
                            best_lap_time=entry.get("best_lap"))
+                finished_rank += 1
 
     _zone_running_session.pop(zone_id, None)
     await _broadcast(

@@ -14,11 +14,13 @@ function updateLeaderboard(el, frame, teams, metadata) {
 
     let statusBadge = '';
     if (car.status === 'disqualified') {
-      statusBadge = '<span class="status-badge status-dq">弃</span>';
-    } else if (car.status === 'stopped') {
-      statusBadge = '<span class="status-badge status-stopped">停</span>';
+      statusBadge = '<span class="status-badge status-dq">违规取消</span>';
     } else if (car.status === 'finished') {
-      statusBadge = '<span class="status-badge status-finished">完</span>';
+      statusBadge = '<span class="status-badge status-finished">完赛</span>';
+    } else if (car.status === 'stopped') {
+      statusBadge = '<span class="status-badge status-stopped">罚停</span>';
+    } else if (car.status === 'idle') {
+      statusBadge = '<span class="status-badge status-idle">未提交</span>';
     }
 
     const speedStr = (car.status === 'disqualified' || car.speed == null)

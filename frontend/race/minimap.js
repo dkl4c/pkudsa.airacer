@@ -91,7 +91,7 @@ function drawCars(ctx, frame, W, H) {
   if (!frame || !frame.cars) return;
   frame.cars.forEach((car, i) => {
     const [cx, cy] = worldToCanvas(car.x, car.y, W, H);
-    const color = car.status === 'disqualified' ? '#555' : TEAM_COLORS[i % TEAM_COLORS.length];
+    const color = (car.status === 'disqualified' || car.status === 'idle') ? '#555' : TEAM_COLORS[i % TEAM_COLORS.length];
 
     // Shadow
     ctx.beginPath();

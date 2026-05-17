@@ -59,6 +59,7 @@ def in_checkpoint(x, y, cp):
 cars = []
 for cc in cars_config:
     node = robot.getFromDef(cc['car_slot'])
+    code_path = cc.get('code_path', '')
     cars.append({
         "team_id":             cc['team_id'],
         "car_slot":            cc['car_slot'],
@@ -71,7 +72,8 @@ for cc in cars_config:
         "lap":                 0,
         "lap_progress":        0.0,
         "checkpoints_passed":  0,          # Total checkpoints crossed (including CP0)
-        "status":              "normal",   # "normal" | "stopped" | "disqualified"
+        "status":              "idle" if code_path == "" else "normal",
+        "has_code":            code_path != "",
         "boost_remaining":     0.0,
         "checkpoint_next":     0,          # Start waiting for CP0 (start/finish line)
         "lap_started":         False,      # True once the car has crossed CP0 for the first time
@@ -81,6 +83,7 @@ for cc in cars_config:
         "stop_end_time":       None,       # sim time when stop penalty ends
         "finish_time":         None,       # sim time when car completed total_laps
         "laps_data":           [],         # list of lap times (float)
+        "last_cp_time":        0.0,        # sim time when last checkpoint was passed (for 60s idle rule)
     })
 
 # ---------------------------------------------------------------------------
@@ -135,6 +138,7 @@ def check_checkpoints(car, sim_time, events):
         car['checkpoint_next'] = 1
         car['lap_progress'] = 0.0
         car['checkpoints_passed'] += 1
+        car['last_cp_time'] = sim_time
         print(f"[CP] {car['team_id']} passed CP0 (start), total cp={car['checkpoints_passed']}")
         events.append({
             "type": "lap_start",
@@ -147,6 +151,7 @@ def check_checkpoints(car, sim_time, events):
         car['checkpoint_next'] = (cp_idx + 1) % len(CHECKPOINTS)
         car['lap_progress'] = cp_idx * 0.25
         car['checkpoints_passed'] += 1
+        car['last_cp_time'] = sim_time
         events.append({
             "type": "checkpoint",
             "team_id": car['team_id'],
@@ -165,6 +170,7 @@ def check_checkpoints(car, sim_time, events):
         car['lap_progress'] = 0.0
         car['checkpoint_next'] = 1
         car['checkpoints_passed'] += 1
+        car['last_cp_time'] = sim_time
 
         events.append({
             "type": "lap_complete",
@@ -353,6 +359,7 @@ def check_race_end(cars, sim_time, events):
     # Detect newly finished cars
     for car in cars:
         if car['lap'] >= total_laps and car['finish_time'] is not None:
+            car['status'] = 'finished'  # 明确标记完赛
             if not grace_started and session_type != "qualifying":
                 grace_started    = True
                 grace_start_time = car['finish_time']
@@ -377,7 +384,7 @@ def check_race_end(cars, sim_time, events):
             race_finished = True
 
     # Non-qualifying: global timeout (120 s) in case no car ever finishes
-    if session_type not in ("qualifying", "placement") and not grace_started:
+    if session_type not in ("qualifying", "placement") and session_type != "test" and not grace_started:
         if sim_time >= 120.0:
             final_rankings = compute_final_rankings(cars)
             events.append({
@@ -388,30 +395,34 @@ def check_race_end(cars, sim_time, events):
             finish_reason = "global_timeout"
             race_finished = True
 
-    # Qualifying / Placement: end when all cars have finished or are stopped/disqualified,
-    # or when the timeout is reached.
-    if session_type in ("qualifying", "placement"):
-        timeout_s = 600.0
-        timed_out = sim_time >= timeout_s
-        all_done = all(
-            c['finish_time'] is not None or c['status'] in ('stopped', 'disqualified')
-            for c in cars
-        )
-        # DEBUG: log car states every 200 frames
-        if frame_count % 200 == 0:
-            for c in cars:
-                print(f"[DEBUG RACE_END] {c['team_id']} lap={c['lap']} ft={'SET' if c['finish_time'] is not None else 'NONE'} status={c['status']} all_done={all_done} sim_time={sim_time:.1f}/{timeout_s}")
-        if all_done or timed_out:
-            print(f"[DEBUG] RACE END: all_done={all_done} timed_out={timed_out} sim_time={sim_time:.1f}")
-            final_rankings = compute_final_rankings(cars)
-            reason = "all_cars_done" if all_done else "timeout"
-            events.append({
-                "type":           "race_end",
-                "reason":         reason,
-                "final_rankings": final_rankings,
-            })
-            finish_reason = reason
-            race_finished = True
+    # 所有车型（qualifying / placement / test）：所有小车均已完成、违规、停止或未提交代码时结束
+    # 或超时结束时
+    timeout_s = 600.0
+    timed_out = sim_time >= timeout_s
+    # 小车无效状态: finished, disqualified, stopped (已完赛被停), idle (未提交代码)
+    all_done = all(
+        c['finish_time'] is not None or c['status'] in ('finished', 'stopped', 'disqualified', 'idle')
+        for c in cars
+    )
+    # DEBUG: log car states every 200 frames
+    if frame_count % 200 == 0:
+        for c in cars:
+            print(f"[DEBUG RACE_END] {c['team_id']} lap={c['lap']} ft={'SET' if c['finish_time'] is not None else 'NONE'} status={c['status']} all_done={all_done} sim_time={sim_time:.1f}/{timeout_s}")
+    if all_done or timed_out:
+        print(f"[DEBUG] RACE END: all_done={all_done} timed_out={timed_out} sim_time={sim_time:.1f}")
+        # 标记完赛但status还没改的小车
+        for c in cars:
+            if c['finish_time'] is not None and c['status'] not in ('finished', 'stopped', 'disqualified'):
+                c['status'] = 'finished'
+        final_rankings = compute_final_rankings(cars)
+        reason = "all_cars_done" if all_done else "timeout"
+        events.append({
+            "type":           "race_end",
+            "reason":         reason,
+            "final_rankings": final_rankings,
+        })
+        finish_reason = reason
+        race_finished = True
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -451,6 +462,21 @@ try:
         for car in cars:
             if car['status'] != 'disqualified' and car['finish_time'] is None:
                 check_checkpoints(car, sim_time, events_this_frame)
+
+        # --- 60秒无检查点违规检测 ---
+        STUCK_TIMEOUT = 60.0
+        for car in cars:
+            if car['status'] in ('normal',) and car['finish_time'] is None and car['lap_started']:
+                if sim_time - car['last_cp_time'] >= STUCK_TIMEOUT:
+                    car['status'] = 'disqualified'
+                    send_cmd_to_car(car, {"cmd": "disqualify"})
+                    events_this_frame.append({
+                        "type": "disqualified",
+                        "team_id": car['team_id'],
+                        "reason": "checkpoint_timeout",
+                        "sim_time": round(sim_time, 3),
+                    })
+                    print(f"[DQ] {car['team_id']} disqualified: 60s without checkpoint (last_cp={car['last_cp_time']:.1f}, now={sim_time:.1f})")
 
         # --- Collision detection ---
         check_car_collisions(cars, sim_time, events_this_frame)
