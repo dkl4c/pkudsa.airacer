@@ -1,0 +1,1048 @@
+<!doctype html>
+<html lang="zh">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>AI Racer — 测试赛事</title>
+
+        <!-- Bootstrap 5 -->
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        />
+        <!-- Bootstrap Icons -->
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+        />
+        <!-- Google Fonts -->
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Rajdhani:wght@600;700&display=swap"
+            rel="stylesheet"
+        />
+        <!-- Shared theme -->
+        <link rel="stylesheet" href="/static/style.css" />
+
+        <style>
+            /* ── Login page layout ── */
+            #login-screen {
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                background: linear-gradient(
+                    135deg,
+                    #1a1a2e 0%,
+                    #991b1b 50%,
+                    #dc2626 100%
+                );
+                padding: 1.5rem;
+            }
+            #login-screen .card {
+                width: 100%;
+                max-width: 400px;
+                border: none;
+            }
+            #login-screen .card-header {
+                background: linear-gradient(135deg, #991b1b, #dc2626);
+                color: #fff;
+                border-radius: var(--card-radius) var(--card-radius) 0 0 !important;
+            }
+
+            /* ── Navbar user area ── */
+            .navbar-user-pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.5rem;
+                background: rgba(255, 255, 255, 0.15);
+                border-radius: 20px;
+                padding: 0.3rem 0.85rem;
+                font-size: 0.875rem;
+                font-weight: 600;
+                color: #fff;
+            }
+            .navbar-user-pill .dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #10b981;
+                flex-shrink: 0;
+            }
+
+            /* ── Team checkbox card ── */
+            .team-check-card {
+                display: flex;
+                align-items: center;
+                gap: 0.6rem;
+                padding: 0.6rem 0.9rem;
+                border: 1px solid #e5e7eb;
+                border-radius: 0.6rem;
+                cursor: pointer;
+                transition:
+                    border-color 0.15s,
+                    background 0.15s;
+                user-select: none;
+            }
+            .team-check-card:hover {
+                border-color: var(--primary-color);
+                background: rgba(220, 38, 38, 0.04);
+            }
+            .team-check-card.checked {
+                border-color: var(--primary-color);
+                background: rgba(220, 38, 38, 0.08);
+            }
+            .team-check-card.disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+            .team-check-card .form-check-input {
+                margin: 0;
+                cursor: pointer;
+            }
+            .team-check-card.disabled .form-check-input {
+                cursor: not-allowed;
+            }
+            .team-check-card .team-avatar {
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-weight: 700;
+                font-size: 0.85rem;
+                color: #fff;
+                flex-shrink: 0;
+            }
+            .team-check-card .team-name {
+                font-weight: 600;
+                font-size: 0.88rem;
+            }
+            .team-check-card .team-tag {
+                font-size: 0.72rem;
+                color: #9ca3af;
+                margin-left: auto;
+            }
+            .team-check-card .badge-self {
+                font-size: 0.7rem;
+                background: var(--primary-color);
+                color: #fff;
+                padding: 0.1rem 0.5rem;
+                border-radius: 10px;
+                margin-left: auto;
+            }
+
+            /* ── Race result table ── */
+            .result-table {
+                width: 100%;
+                font-size: 0.82rem;
+                border-collapse: collapse;
+            }
+            .result-table th {
+                background: #f3f4f6;
+                padding: 0.5rem 0.75rem;
+                font-weight: 600;
+                text-align: left;
+                border-bottom: 2px solid #d1d5db;
+            }
+            .result-table td {
+                padding: 0.45rem 0.75rem;
+                border-bottom: 1px solid #e5e7eb;
+            }
+            .result-table .rank-1 {
+                background: #fef3c7;
+                font-weight: 600;
+            }
+            .result-table .rank-2 {
+                background: #f3f4f6;
+            }
+            .result-table .rank-3 {
+                background: #fff7ed;
+            }
+
+            /* ── Status badge ── */
+            .race-status-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.35rem;
+                font-size: 0.78rem;
+                font-weight: 600;
+                padding: 0.2rem 0.65rem;
+                border-radius: 20px;
+            }
+            .race-status-badge.waiting {
+                background: #fef3c7;
+                color: #92400e;
+            }
+            .race-status-badge.running {
+                background: #dbeafe;
+                color: #1e40af;
+            }
+            .race-status-badge.done {
+                background: #d1fae5;
+                color: #065f46;
+            }
+            .race-status-badge.error {
+                background: #fee2e2;
+                color: #991b1b;
+            }
+        </style>
+    </head>
+
+    <body class="bg-light">
+        <!-- ══════════════════════════════ LOGIN SCREEN ══════════════════ -->
+        <div id="login-screen">
+            <div class="card shadow-lg">
+                <div class="card-header text-center py-3">
+                    <h4 class="mb-0 fw-bold">
+                        <i class="bi bi-trophy me-2"></i>AI Racer 测试赛事
+                    </h4>
+                    <small class="opacity-75">发起一场多队伍测试比赛</small>
+                </div>
+                <div class="card-body p-4">
+                    <div
+                        id="login-alert"
+                        class="alert alert-danger d-none py-2"
+                        style="font-size: 0.85rem"
+                    >
+                        <i class="bi bi-exclamation-triangle me-1"></i
+                        ><span id="login-alert-text"></span>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">赛区</label>
+                        <select id="input-zone" class="form-select">
+                            <option value="" disabled selected>
+                                加载中...
+                            </option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">队伍 ID</label>
+                        <input
+                            id="input-team"
+                            type="text"
+                            class="form-control"
+                            placeholder="如 experiment_01"
+                        />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">密码</label>
+                        <input
+                            id="input-password"
+                            type="password"
+                            class="form-control"
+                            placeholder="输入密码"
+                        />
+                    </div>
+                    <button
+                        class="btn btn-danger w-100"
+                        id="btn-login"
+                        onclick="handleLogin()"
+                    >
+                        <span
+                            class="spinner-border spinner-border-sm me-2 d-none"
+                            id="login-spinner"
+                        ></span>
+                        <i
+                            class="bi bi-box-arrow-in-right me-1"
+                            id="login-icon"
+                        ></i>
+                        <span id="login-btn-text">登录</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════ MAIN PANEL ════════════════════ -->
+        <div id="main-panel" class="d-none">
+            <!-- Navbar -->
+            <nav
+                class="navbar navbar-dark"
+                style="
+                    background: linear-gradient(
+                        135deg,
+                        #1a1a2e 0%,
+                        #991b1b 50%,
+                        #dc2626 100%
+                    );
+                "
+            >
+                <div class="container">
+                    <span class="navbar-brand mb-0 h1">
+                        <i class="bi bi-trophy me-2"></i>AI Racer 测试赛事
+                    </span>
+                    <div class="d-flex align-items-center gap-3">
+                        <span class="navbar-user-pill">
+                            <span class="dot"></span>
+                            <span id="nav-team-id">--</span>
+                        </span>
+                        <button
+                            class="btn btn-sm btn-outline-light"
+                            onclick="handleLogout()"
+                        >
+                            <i class="bi bi-box-arrow-right me-1"></i>退出
+                        </button>
+                    </div>
+                </div>
+            </nav>
+
+            <div class="container py-4" style="max-width: 900px">
+                <!-- ── CREATE RACE CARD ── -->
+                <div class="card mb-4 shadow-sm">
+                    <div class="card-header card-section-header p-3">
+                        <h5 class="mb-0">
+                            <i class="bi bi-gear me-2"></i>创建测试赛事
+                        </h5>
+                    </div>
+                    <div class="card-body p-4">
+                        <!-- Row 1: Laps only -->
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-3">
+                                <label class="form-label fw-semibold"
+                                    >圈数</label
+                                >
+                                <input
+                                    id="input-laps"
+                                    type="number"
+                                    class="form-control"
+                                    value="3"
+                                    min="1"
+                                    max="10"
+                                />
+                            </div>
+                            <div class="col-md-3 d-flex align-items-end">
+                                <div
+                                    class="text-muted"
+                                    style="font-size: 0.78rem"
+                                >
+                                    1 ~ 10 圈
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Row 2: Name -->
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold"
+                                >比赛备注
+                                <span
+                                    class="text-muted"
+                                    style="font-size: 0.78rem"
+                                    >(可选)</span
+                                >
+                            </label>
+                            <input
+                                id="input-name"
+                                type="text"
+                                class="form-control"
+                                placeholder="如：测试新循线算法 vs A队"
+                                style="max-width: 450px"
+                            />
+                        </div>
+
+                        <!-- Team selector -->
+                        <label class="form-label fw-semibold mb-2"
+                            >参赛队伍
+                            <span class="text-muted" style="font-size: 0.78rem"
+                                >(含自己最多 4 支，至少 2 支)</span
+                            >
+                        </label>
+                        <div
+                            id="team-grid"
+                            class="row g-2 mb-3"
+                            style="max-height: 360px; overflow-y: auto"
+                        >
+                            <div class="col-12 text-center text-muted py-3">
+                                <span
+                                    class="spinner-border spinner-border-sm me-2"
+                                ></span
+                                >加载队伍列表中...
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="d-flex align-items-center gap-3 mt-3">
+                            <button
+                                class="btn btn-danger px-4"
+                                id="btn-create"
+                                onclick="handleCreateRace()"
+                                disabled
+                            >
+                                <span
+                                    class="spinner-border spinner-border-sm me-2 d-none"
+                                    id="create-spinner"
+                                ></span>
+                                <i
+                                    class="bi bi-play-circle me-1"
+                                    id="create-icon"
+                                ></i>
+                                <span id="create-btn-text">发起测试赛事</span>
+                            </button>
+                            <span
+                                class="text-muted small"
+                                id="create-hint"
+                            ></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── CURRENT / POLLING STATUS ── -->
+                <div id="current-race-card" class="card mb-4 shadow-sm d-none">
+                    <div
+                        class="card-header card-section-header p-3 d-flex justify-content-between align-items-center"
+                    >
+                        <h5 class="mb-0">
+                            <i class="bi bi-activity me-2"></i>当前测试赛事
+                        </h5>
+                        <span id="current-status-badge"></span>
+                    </div>
+                    <div class="card-body p-4" id="current-race-body">
+                        <!-- Rendered by JS -->
+                    </div>
+                </div>
+
+                <!-- ── HISTORY ── -->
+                <div class="card shadow-sm">
+                    <div
+                        class="card-header card-section-header p-3 d-flex justify-content-between align-items-center"
+                    >
+                        <h5 class="mb-0">
+                            <i class="bi bi-clock-history me-2"></i>历史记录
+                        </h5>
+                        <button
+                            class="btn btn-sm btn-outline-secondary"
+                            onclick="loadHistory()"
+                        >
+                            <i class="bi bi-arrow-clockwise me-1"></i>刷新
+                        </button>
+                    </div>
+                    <div class="card-body p-0" id="history-body">
+                        <div
+                            class="text-center text-muted py-4"
+                            style="font-size: 0.85rem"
+                        >
+                            尚未发起任何测试赛事
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════ JS ════════════════════════════ -->
+        <!-- Bootstrap 5 Bundle -->
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+        <script>
+            "use strict";
+
+            // ── State ───────────────────────────────────────────────────
+            const S = {
+                teamId: null,
+                password: null,
+                zoneId: null,
+                zoneName: null,
+                teams: [], // all teams in the zone
+                currentRaceId: null, // race_id being polled
+                pollTimer: null,
+            };
+
+            // ── Utilities ──────────────────────────────────────────────
+            function esc(s) {
+                if (s == null) return "";
+                var d = document.createElement("div");
+                d.textContent = String(s);
+                return d.innerHTML;
+            }
+
+            function authHeader() {
+                return "Basic " + btoa(S.teamId + ":" + S.password);
+            }
+
+            function fmtTime(iso) {
+                if (!iso) return "--";
+                try {
+                    var d = new Date(iso);
+                    return d.toLocaleString("zh-CN", {
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                    });
+                } catch {
+                    return iso;
+                }
+            }
+
+            function toast(msg, type) {
+                type = type || "info";
+                var el = document.createElement("div");
+                el.className =
+                    "toast align-items-center text-bg-" +
+                    type +
+                    " border-0 position-fixed bottom-0 end-0 m-3";
+                el.style = "z-index: 9999";
+                el.setAttribute("role", "alert");
+                el.setAttribute("aria-live", "assertive");
+                el.setAttribute("aria-atomic", "true");
+                el.innerHTML =
+                    '<div class="d-flex"><div class="toast-body">' +
+                    esc(msg) +
+                    '</div><button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div>';
+                document.body.appendChild(el);
+                var bs = new bootstrap.Toast(el, { delay: 4000 });
+                bs.show();
+                el.addEventListener("hidden.bs.toast", function () {
+                    el.remove();
+                });
+            }
+
+            const AVATAR_COLORS = [
+                "#dc2626",
+                "#2563eb",
+                "#16a34a",
+                "#d97706",
+                "#7c3aed",
+                "#db2777",
+                "#0891b2",
+                "#ca8a04",
+            ];
+
+            // ── Login ──────────────────────────────────────────────────
+            async function loadZones() {
+                try {
+                    var r = await fetch("/api/zones");
+                    if (!r.ok) throw new Error("HTTP " + r.status);
+                    var zones = await r.json();
+                    var sel = document.getElementById("input-zone");
+                    sel.innerHTML =
+                        '<option value="" disabled selected>请选择赛区</option>';
+                    zones.forEach(function (z) {
+                        var o = document.createElement("option");
+                        o.value = z.id;
+                        o.textContent = z.name;
+                        sel.appendChild(o);
+                    });
+                } catch (e) {
+                    var sel = document.getElementById("input-zone");
+                    sel.innerHTML =
+                        '<option value="" disabled>加载失败: ' +
+                        esc(e.message) +
+                        "</option>";
+                }
+            }
+
+            async function handleLogin() {
+                var zoneId = document.getElementById("input-zone").value;
+                var teamId = document.getElementById("input-team").value.trim();
+                var password = document.getElementById("input-password").value;
+
+                if (!zoneId || !teamId || !password) {
+                    showLoginAlert("请完整填写赛区、队伍 ID 和密码");
+                    return;
+                }
+
+                setLoginLoading(true);
+                hideLoginAlert();
+
+                // 用本地变量构造 auth header（此时 S.teamId / S.password 尚未赋值）
+                var auth = "Basic " + btoa(teamId + ":" + password);
+                try {
+                    var resp = await fetch(
+                        "/api/test-status/" + encodeURIComponent(teamId),
+                        { headers: { Authorization: auth } },
+                    );
+                } catch (e) {
+                    showLoginAlert("网络错误: " + e.message);
+                    setLoginLoading(false);
+                    return;
+                }
+
+                if (resp.status === 401) {
+                    showLoginAlert("队伍 ID 或密码错误");
+                    setLoginLoading(false);
+                    return;
+                }
+
+                S.teamId = teamId;
+                S.password = password;
+                S.zoneId = zoneId;
+                S.zoneName =
+                    document.getElementById("input-zone").selectedOptions[0]
+                        ?.textContent || zoneId;
+
+                document.getElementById("nav-team-id").textContent = teamId;
+                document
+                    .getElementById("main-panel")
+                    .classList.remove("d-none");
+                document.getElementById("login-screen").classList.add("d-none");
+
+                await loadTeams();
+                loadHistory();
+            }
+
+            function showLoginAlert(msg) {
+                var el = document.getElementById("login-alert");
+                document.getElementById("login-alert-text").textContent = msg;
+                el.classList.remove("d-none");
+            }
+            function hideLoginAlert() {
+                document.getElementById("login-alert").classList.add("d-none");
+            }
+            function setLoginLoading(loading) {
+                var btn = document.getElementById("btn-login");
+                document
+                    .getElementById("login-spinner")
+                    .classList.toggle("d-none", !loading);
+                document
+                    .getElementById("login-icon")
+                    .classList.toggle("d-none", loading);
+                document.getElementById("login-btn-text").textContent = loading
+                    ? "登录中..."
+                    : "登录";
+                btn.disabled = loading;
+            }
+
+            function handleLogout() {
+                if (S.pollTimer) {
+                    clearInterval(S.pollTimer);
+                    S.pollTimer = null;
+                }
+                S.teamId = S.password = S.zoneId = S.zoneName = null;
+                S.teams = [];
+                S.currentRaceId = null;
+                document.getElementById("main-panel").classList.add("d-none");
+                document
+                    .getElementById("login-screen")
+                    .classList.remove("d-none");
+                document.getElementById("input-password").value = "";
+                document.getElementById("input-laps").value = 3;
+            }
+
+            // ── Team loading ───────────────────────────────────────────
+            async function loadTeams() {
+                var grid = document.getElementById("team-grid");
+                try {
+                    var r = await fetch(
+                        "/api/teams?zone_id=" + encodeURIComponent(S.zoneId),
+                    );
+                    if (!r.ok) throw new Error("HTTP " + r.status);
+                    var data = await r.json();
+                    S.teams = data.teams || data || [];
+                } catch (e) {
+                    grid.innerHTML =
+                        '<div class="col-12 text-danger text-center py-3">加载队伍失败: ' +
+                        esc(e.message) +
+                        "</div>";
+                    return;
+                }
+                renderTeamGrid();
+            }
+
+            function renderTeamGrid() {
+                var grid = document.getElementById("team-grid");
+                if (!S.teams.length) {
+                    grid.innerHTML =
+                        '<div class="col-12 text-muted text-center py-3">该赛区暂无队伍</div>';
+                    return;
+                }
+
+                var html = "";
+                S.teams.forEach(function (t, i) {
+                    var isSelf = t.id === S.teamId;
+                    var color = AVATAR_COLORS[i % AVATAR_COLORS.length];
+                    var initial = (t.name || t.id).charAt(0).toUpperCase();
+                    html +=
+                        '<div class="col-md-6">' +
+                        '<label class="team-check-card' +
+                        (isSelf ? " checked" : "") +
+                        '" data-team-id="' +
+                        esc(t.id) +
+                        '" id="tcc-' +
+                        esc(t.id) +
+                        '">' +
+                        '<input type="checkbox" class="form-check-input" ' +
+                        (isSelf ? "checked disabled" : "") +
+                        ' onchange="onTeamToggle(this)"' +
+                        ' data-team-id="' +
+                        esc(t.id) +
+                        '" />' +
+                        '<span class="team-avatar" style="background:' +
+                        color +
+                        '">' +
+                        esc(initial) +
+                        "</span>" +
+                        '<span class="team-name">' +
+                        esc(t.name || t.id) +
+                        "</span>" +
+                        (isSelf
+                            ? '<span class="badge-self">我</span>'
+                            : '<span class="team-tag">' +
+                              esc(t.id) +
+                              "</span>") +
+                        "</label>" +
+                        "</div>";
+                });
+                grid.innerHTML = html;
+                updateCreateButton();
+            }
+
+            function getSelectedTeams() {
+                var checks = document.querySelectorAll(
+                    '#team-grid input[type="checkbox"]:checked',
+                );
+                return Array.from(checks).map(function (cb) {
+                    return cb.getAttribute("data-team-id");
+                });
+            }
+
+            function onTeamToggle(cb) {
+                var selected = getSelectedTeams();
+                var max = 4;
+
+                if (cb.checked && selected.length > max) {
+                    cb.checked = false;
+                    toast("最多选择 " + max + " 支队伍（含自己）", "warning");
+                }
+
+                // Visual feedback
+                document
+                    .querySelectorAll(".team-check-card")
+                    .forEach(function (card) {
+                        var tid = card.getAttribute("data-team-id");
+                        var isChecked = document.querySelector(
+                            '#team-grid input[type="checkbox"][data-team-id="' +
+                                tid +
+                                '"]:checked',
+                        );
+                        card.classList.toggle("checked", !!isChecked);
+                    });
+
+                updateCreateButton();
+            }
+
+            function updateCreateButton() {
+                var selected = getSelectedTeams();
+                var btn = document.getElementById("btn-create");
+                var hint = document.getElementById("create-hint");
+
+                if (selected.length < 2) {
+                    btn.disabled = true;
+                    hint.textContent =
+                        "至少需要 2 支队伍（自己和至少 1 个对手）";
+                } else {
+                    btn.disabled = false;
+                    hint.textContent = selected.length + " 支队伍已选择";
+                }
+            }
+
+            // ── Create race ────────────────────────────────────────────
+            async function handleCreateRace() {
+                var world = "complex";
+
+                var laps = parseInt(
+                    document.getElementById("input-laps").value,
+                );
+                if (isNaN(laps) || laps < 1 || laps > 10) {
+                    toast("圈数必须在 1 ~ 10 之间", "warning");
+                    return;
+                }
+
+                var selected = getSelectedTeams();
+                if (selected.length < 2) {
+                    toast("至少需要 2 支队伍", "warning");
+                    return;
+                }
+
+                var opponents = selected.filter(function (t) {
+                    return t !== S.teamId;
+                });
+
+                setCreateLoading(true);
+
+                var resp, data;
+                try {
+                    resp = await fetch("/api/races", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            team_id: S.teamId,
+                            password: S.password,
+                            world: world,
+                            total_laps: laps,
+                            opponents: opponents,
+                            name:
+                                document
+                                    .getElementById("input-name")
+                                    .value.trim() || null,
+                        }),
+                    });
+                    data = await resp.json();
+                } catch (e) {
+                    toast("网络错误: " + e.message, "danger");
+                    setCreateLoading(false);
+                    return;
+                }
+
+                setCreateLoading(false);
+
+                if (resp.ok && data.status === "created") {
+                    toast(
+                        "测试赛事已创建！队列位置: " +
+                            (data.queue_position || "--"),
+                        "success",
+                    );
+                    S.currentRaceId = data.race_id;
+                    showCurrentRace(data.race_id);
+                    startPolling(data.race_id);
+                    loadHistory();
+                } else {
+                    toast(data.detail || data.message || "创建失败", "danger");
+                }
+            }
+
+            function setCreateLoading(loading) {
+                document.getElementById("btn-create").disabled = loading;
+                document
+                    .getElementById("create-spinner")
+                    .classList.toggle("d-none", !loading);
+                document
+                    .getElementById("create-icon")
+                    .classList.toggle("d-none", loading);
+                document.getElementById("create-btn-text").textContent = loading
+                    ? "创建中..."
+                    : "发起测试赛事";
+            }
+
+            // ── Polling ────────────────────────────────────────────────
+            function startPolling(raceId) {
+                if (S.pollTimer) clearInterval(S.pollTimer);
+                S.currentRaceId = raceId;
+                S.pollTimer = setInterval(function () {
+                    pollRace(raceId);
+                }, 3000);
+                pollRace(raceId); // immediate first fetch
+            }
+
+            function stopPolling() {
+                if (S.pollTimer) {
+                    clearInterval(S.pollTimer);
+                    S.pollTimer = null;
+                }
+            }
+
+            async function pollRace(raceId) {
+                if (!raceId) return;
+                try {
+                    var r = await fetch("/api/races/" + raceId);
+                    if (!r.ok) return;
+                    var data = await r.json();
+                    renderCurrentRace(data);
+                    if (data.status === "done" || data.status === "error") {
+                        stopPolling();
+                        loadHistory();
+                    }
+                } catch (e) {
+                    // silent
+                }
+            }
+
+            // ── Current race display ───────────────────────────────────
+            function showCurrentRace(raceId) {
+                document
+                    .getElementById("current-race-card")
+                    .classList.remove("d-none");
+            }
+
+            function renderCurrentRace(race) {
+                var card = document.getElementById("current-race-card");
+                card.classList.remove("d-none");
+
+                // Badge
+                var badge = document.getElementById("current-status-badge");
+                var statusLabels = {
+                    waiting: "排队中",
+                    running: "运行中",
+                    done: "已完成",
+                    error: "失败",
+                    cancelled: "已取消",
+                };
+                var sl = statusLabels[race.status] || race.status;
+                badge.innerHTML =
+                    '<span class="race-status-badge ' +
+                    race.status +
+                    '">' +
+                    (race.status === "running"
+                        ? '<span class="spinner-border spinner-border-sm"></span> '
+                        : "") +
+                    esc(sl) +
+                    "</span>";
+
+                // Body
+                var body = document.getElementById("current-race-body");
+
+                var html =
+                    '<div class="row g-3 mb-3">' +
+                    '  <div class="col-md-3"><small class="text-muted">圈数</small><div class="fw-semibold">' +
+                    race.total_laps +
+                    "</div></div>" +
+                    '  <div class="col-md-3"><small class="text-muted">发起时间</small><div class="fw-semibold" style="font-size:0.85rem">' +
+                    fmtTime(race.created_at) +
+                    "</div></div>" +
+                    '  <div class="col-md-4"><small class="text-muted">参与队伍</small><div class="fw-semibold" style="font-size:0.85rem">' +
+                    (race.participants || [])
+                        .map(function (t) {
+                            return (
+                                '<span class="badge bg-secondary me-1">' +
+                                esc(t) +
+                                "</span>"
+                            );
+                        })
+                        .join("") +
+                    "</div></div>" +
+                    "</div>";
+
+                // Result table
+                if (race.result && race.result.final_rankings) {
+                    var rankings = race.result.final_rankings;
+                    html +=
+                        '<h6 class="fw-bold mb-2"><i class="bi bi-trophy me-1"></i>比赛结果</h6>' +
+                        '<table class="result-table">' +
+                        "<thead><tr><th>#</th><th>队伍</th><th>圈数</th><th>最优圈时</th></tr></thead><tbody>";
+                    rankings.forEach(function (entry) {
+                        var rankClass = "";
+                        if (entry.rank === 1) rankClass = "rank-1";
+                        else if (entry.rank === 2) rankClass = "rank-2";
+                        else if (entry.rank === 3) rankClass = "rank-3";
+                        var bestLap =
+                            entry.best_lap != null
+                                ? entry.best_lap.toFixed(3) + " s"
+                                : "--";
+                        html +=
+                            '<tr class="' +
+                            rankClass +
+                            '">' +
+                            "<td><strong>" +
+                            entry.rank +
+                            "</strong></td>" +
+                            "<td>" +
+                            esc(entry.team_name || entry.team_id) +
+                            "</td>" +
+                            "<td>" +
+                            (entry.laps != null ? entry.laps : "--") +
+                            "</td>" +
+                            "<td>" +
+                            bestLap +
+                            "</td>" +
+                            "</tr>";
+                    });
+                    html += "</tbody></table>";
+                    if (race.finish_reason) {
+                        html +=
+                            '<div class="text-muted mt-2" style="font-size:0.78rem">结束原因: ' +
+                            esc(race.finish_reason) +
+                            "</div>";
+                    }
+                    stopPolling();
+                } else if (
+                    race.status === "waiting" ||
+                    race.status === "running"
+                ) {
+                    html +=
+                        '<div class="text-muted text-center py-3" style="font-size:0.85rem">' +
+                        '<span class="spinner-border spinner-border-sm me-2"></span>' +
+                        "仿真运行中，结果将在完成后显示..." +
+                        "</div>";
+                }
+
+                body.innerHTML = html;
+            }
+
+            // ── History ────────────────────────────────────────────────
+            async function loadHistory() {
+                if (!S.teamId) return;
+                var body = document.getElementById("history-body");
+                try {
+                    var r = await fetch(
+                        "/api/races?team_id=" +
+                            encodeURIComponent(S.teamId) +
+                            "&limit=20",
+                    );
+                    if (!r.ok) {
+                        body.innerHTML =
+                            '<div class="text-muted text-center py-4">加载失败</div>';
+                        return;
+                    }
+                    var data = await r.json();
+                    var races = data.races || [];
+                    if (!races.length) {
+                        body.innerHTML =
+                            '<div class="text-muted text-center py-4" style="font-size:0.85rem">尚未发起任何测试赛事</div>';
+                        return;
+                    }
+                    renderHistory(races);
+                } catch (e) {
+                    body.innerHTML =
+                        '<div class="text-muted text-center py-4">加载失败</div>';
+                }
+            }
+
+            function renderHistory(races) {
+                var body = document.getElementById("history-body");
+                var html = '<div class="list-group list-group-flush">';
+                races.forEach(function (r) {
+                    var statusLabels = {
+                        waiting: "排队中",
+                        running: "运行中",
+                        done: "已完成",
+                        error: "失败",
+                        cancelled: "已取消",
+                    };
+                    var sl = statusLabels[r.status] || r.status;
+                    var participantCount = (r.participants || []).length;
+                    var isActive = r.race_id === S.currentRaceId;
+                    var title = r.name
+                        ? esc(r.name)
+                        : participantCount + " 队 · " + r.total_laps + "圈";
+                    html +=
+                        '<div class="list-group-item list-group-item-action' +
+                        (isActive ? " active" : "") +
+                        '" style="cursor:pointer" onclick="pollRace(\'' +
+                        r.race_id +
+                        "'); showCurrentRace('" +
+                        r.race_id +
+                        "')\">" +
+                        '<div class="d-flex justify-content-between align-items-center">' +
+                        "  <div>" +
+                        '    <span class="fw-semibold">' +
+                        title +
+                        "</span>" +
+                        '    <br><small class="text-muted">' +
+                        fmtTime(r.created_at) +
+                        "</small>" +
+                        "  </div>" +
+                        '  <span class="badge bg-' +
+                        (r.status === "done"
+                            ? "success"
+                            : r.status === "error"
+                              ? "danger"
+                              : "secondary") +
+                        '">' +
+                        sl +
+                        "</span>" +
+                        "</div>" +
+                        "</div>";
+                });
+                html += "</div>";
+                body.innerHTML = html;
+            }
+
+            // ══════════════════════════════ INIT ════════════════════════
+            (async function init() {
+                await loadZones();
+            })();
+        </script>
+    </body>
+</html>
