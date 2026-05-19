@@ -73,7 +73,7 @@ async def list_recordings():
         try:
             with get_db(DB_PATH) as conn:
                 rows = conn.execute(
-                    f"SELECT id, name FROM race_sessions WHERE id IN ({placeholders})",
+                    f"SELECT id, name FROM races WHERE id IN ({placeholders})",
                     session_ids,
                 ).fetchall()
             name_map: Dict[str, str] = {}

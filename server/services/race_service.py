@@ -36,12 +36,14 @@ def on_race_ended(race_id: str, result: Dict[str, Any]) -> None:
 
     try:
         with get_db(DB_PATH) as conn:
-            action.update_race_session(
+            from server.database.action import update_race as _update_race
+
+            _update_race(
                 conn,
                 race_id,
-                phase="finished",
+                status="done",
                 finished_at=finished_at,
-                result=result,
+                result=json.dumps(result, ensure_ascii=False),
             )
             for entry in final_rankings:
                 rank = entry.get("rank", 99)

@@ -43,24 +43,27 @@ from server.config.config import (
     SUBMISSIONS_DIR,
 )
 from server.database.action import (
+    create_race as db_create_race,
+)
+from server.database.action import (
     db_create_zone,
     db_delete_zone,
     db_ensure_default_zone,
     db_get_placement_rankings,
-    db_get_running_session,
     db_get_stage_session_results,
     db_get_teams_with_code,
-    db_get_waiting_session,
     db_get_zone,
     db_get_zone_standings,
     db_get_zone_team_count,
     db_get_zone_team_ids,
     db_get_zone_teams,
     db_list_zones,
-    db_mark_session_aborted,
-    db_mark_session_finished,
-    db_mark_session_running,
-    db_upsert_session,
+    get_running_race,
+    get_waiting_race,
+    update_race,
+)
+from server.database.action import (
+    get_race as db_get_race,
 )
 from server.database.models import get_db
 from server.race.bracket import compute_bracket
@@ -179,8 +182,7 @@ def _determine_current_stage(conn, zone_id: str, bracket: dict) -> Optional[str]
     """Find the first stage that has unfinished sessions; None if all done."""
     for stage in bracket["stages"]:
         finished = conn.execute(
-            "SELECT COUNT(*) FROM race_sessions "
-            "WHERE zone_id=? AND type=? AND phase IN ('recording_ready','finished')",
+            "SELECT COUNT(*) FROM races WHERE zone_id=? AND type=? AND status='done'",
             (zone_id, stage),
         ).fetchone()[0]
         if finished < bracket["sessions_per_stage"][stage]:
@@ -225,7 +227,7 @@ def _pre_create_stage_sessions(conn, zone_id: str, stage: str, bracket: dict) ->
 
     # 清理同 zone+stage 的旧 waiting 场次 + 已取消的旧记录，避免累积
     conn.execute(
-        "DELETE FROM race_sessions WHERE zone_id=? AND type=? AND phase IN ('waiting', 'cancelled')",
+        "DELETE FROM races WHERE zone_id=? AND type=? AND status IN ('waiting', 'cancelled')",
         (zone_id, stage),
     )
 
@@ -246,7 +248,18 @@ def _pre_create_stage_sessions(conn, zone_id: str, stage: str, bracket: dict) ->
             continue
         sid = f"{zone_id}_{stage}_{i + 1}_{ts}"
         name = f"{prefix} 第{i + 1}场" if total_sessions > 1 else prefix
-        db_upsert_session(conn, sid, stage, team_ids, laps, zone_id, name=name)
+        db_create_race(
+            conn,
+            race_id=sid,
+            race_type=stage,
+            zone_id=zone_id,
+            initiator=None,
+            participant_ids=team_ids,
+            world_key="complex",
+            total_laps=laps,
+            name=name,
+            created_at=datetime.datetime.now().isoformat(),
+        )
         if first_sid is None:
             first_sid = sid
     return first_sid
@@ -311,7 +324,7 @@ def _get_running_session_id(zone_id: str) -> Optional[str]:
     # Fallback after a server restart: read running_session from the database
     try:
         with get_db(DB_PATH) as conn:
-            row = db_get_running_session(conn, zone_id)
+            row = get_running_race(conn, zone_id)
         if row:
             sid = row["id"]
             _zone_running_session[zone_id] = sid  # repopulate in-memory cache
@@ -402,7 +415,7 @@ async def get_zone_bracket(zone_id: str, _auth=Depends(require_admin)):
 @router.get("/zones/{zone_id}/pending-session")
 async def get_pending_session(zone_id: str, _auth=Depends(require_admin)):
     with get_db(DB_PATH) as conn:
-        row = db_get_waiting_session(conn, zone_id)
+        row = get_waiting_race(conn, zone_id)
     if row is None:
         return {"zone_id": zone_id, "session": None}
     row_dict = dict(row)
@@ -412,8 +425,8 @@ async def get_pending_session(zone_id: str, _auth=Depends(require_admin)):
             "id": row_dict["id"],
             "type": row_dict["type"],
             "total_laps": row_dict["total_laps"],
-            "team_count": len(row_dict["team_ids"]),
-            "team_ids": row_dict["team_ids"],
+            "team_count": len(row_dict["participant_ids"]),
+            "team_ids": row_dict["participant_ids"],
             "name": row_dict.get("name"),
         },
     }
@@ -429,7 +442,7 @@ async def get_stage_sessions(zone_id: str, _auth=Depends(require_admin)):
     """Return all sessions for this zone grouped by stage, with phase status."""
     with get_db(DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT id, type, total_laps, team_ids, phase, name FROM race_sessions "
+            "SELECT id, type, total_laps, participant_ids, name, status FROM races "
             "WHERE zone_id=? ORDER BY rowid",
             (zone_id,),
         ).fetchall()
@@ -439,7 +452,7 @@ async def get_stage_sessions(zone_id: str, _auth=Depends(require_admin)):
 
     sessions = []
     for r in rows:
-        team_ids = json.loads(r["team_ids"]) if r["team_ids"] else []
+        team_ids = json.loads(r["participant_ids"]) if r["participant_ids"] else []
         r_dict = dict(r)  # convert Row to dict for .get() safety
         sessions.append(
             {
@@ -448,7 +461,7 @@ async def get_stage_sessions(zone_id: str, _auth=Depends(require_admin)):
                 "total_laps": r_dict["total_laps"],
                 "team_count": len(team_ids),
                 "team_ids": team_ids,
-                "phase": r_dict["phase"],
+                "phase": r_dict["status"],
                 "name": r_dict.get("name"),
             }
         )
@@ -493,13 +506,14 @@ async def zone_set_session(
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
 
-        db_upsert_session(
+        db_create_race(
             conn,
-            body.session_id,
-            body.session_type,
-            team_ids,
-            total_laps,
-            zone_id,
+            race_id=body.session_id,
+            race_type=body.session_type,
+            zone_id=zone_id,
+            initiator=None,
+            participant_ids=team_ids,
+            total_laps=total_laps,
             name=body.name,
         )
 
@@ -520,7 +534,7 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
         sm.transition(RaceState.IDLE)
 
     with get_db(DB_PATH) as conn:
-        row = db_get_waiting_session(conn, zone_id)
+        row = get_waiting_race(conn, zone_id)
 
     if row is None:
         # Pre-create ALL sessions for the new stage
@@ -533,7 +547,7 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
                     status_code=409, detail="所有阶段已完成，无法开始新比赛"
                 )
             _pre_create_stage_sessions(conn, zone_id, stage, bracket)
-            row = db_get_waiting_session(conn, zone_id)
+            row = get_waiting_race(conn, zone_id)
             if row is None:
                 raise HTTPException(status_code=500, detail="自动创建场次失败")
 
@@ -548,7 +562,7 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
         raise HTTPException(status_code=409, detail=str(exc))
 
     with get_db(DB_PATH) as conn:
-        teams_data = db_get_teams_with_code(conn, row["team_ids"])
+        teams_data = db_get_teams_with_code(conn, row["participant_ids"])
     cars = _build_cars(teams_data)
     if not cars:
         sm.reset()
@@ -566,7 +580,7 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
 
     now = datetime.datetime.now().isoformat()
     with get_db(DB_PATH) as conn:
-        db_mark_session_running(conn, session_id, now)
+        update_race(conn, session_id, status="running", started_at=now)
 
     _zone_running_session[zone_id] = session_id
     asyncio.create_task(_watch_simnode(session_id, session_type, zone_id))
@@ -585,7 +599,7 @@ async def zone_start_race(zone_id: str, _auth=Depends(require_admin)):
 @router.post("/zones/{zone_id}/stop-race")
 async def zone_stop_race(zone_id: str, _auth=Depends(require_admin)):
     with get_db(DB_PATH) as conn:
-        row = db_get_running_session(conn, zone_id)
+        row = get_running_race(conn, zone_id)
     session_id = row["id"] if row else None
     session_type = row["type"] if row else "placement"
 
@@ -715,10 +729,7 @@ async def _handle_finished(
     now = datetime.datetime.now().isoformat()
     _POINTS_TABLE = {1: 10, 2: 7, 3: 5, 4: 3}
     with get_db(DB_PATH) as conn:
-        db_mark_session_finished(conn, session_id, now)
-        from server.database.action import update_race_session as _update_race_session
-
-        _update_race_session(conn, session_id, result=result)
+        update_race(conn, session_id, status="done", finished_at=now, result=result)
 
         # Write race points ONLY for cars that finished the race
         final_rankings = result.get("final_rankings", [])
@@ -763,8 +774,7 @@ async def _after_race_complete(zone_id: str, stage: str):
         bracket = compute_bracket(team_count)
         total = bracket["sessions_per_stage"].get(stage, 1)
         finished = conn.execute(
-            "SELECT COUNT(*) FROM race_sessions "
-            "WHERE zone_id=? AND type=? AND phase IN ('recording_ready','finished')",
+            "SELECT COUNT(*) FROM races WHERE zone_id=? AND type=? AND status='done'",
             (zone_id, stage),
         ).fetchone()[0]
 
@@ -811,12 +821,9 @@ async def _handle_aborted(session_id: str, session_type: str, zone_id: str = "de
             ),
             encoding="utf-8",
         )
-        db_phase = "recording_ready"
-    else:
-        db_phase = "aborted"
 
     with get_db(DB_PATH) as conn:
-        db_mark_session_aborted(conn, session_id, db_phase, now)
+        update_race(conn, session_id, status="cancelled", finished_at=now)
     _zone_running_session.pop(zone_id, None)
     await _broadcast("aborted", zone_id=zone_id, session_id=session_id)
 

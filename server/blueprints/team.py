@@ -9,12 +9,13 @@ from pydantic import BaseModel
 from server.config.config import DB_PATH
 from server.database.action import (
     create_team,
-    db_get_running_session,
     db_get_teams_by_zone,
     db_get_zone_detailed,
     db_get_zone_standings,
     db_list_zones,
     db_resource_exists,
+)
+from server.database.action import (
     list_teams as db_list_all_teams,
 )
 from server.database.models import get_db
@@ -28,16 +29,18 @@ router = APIRouter(prefix="/api")
 # Request models
 # ---------------------------------------------------------------------------
 
+
 class RegisterRequest(BaseModel):
-    zone_id:   str
-    team_id:   str
+    zone_id: str
+    team_id: str
     team_name: str
-    password:  str
+    password: str
 
 
 # ---------------------------------------------------------------------------
 # GET /api/zones — public zone list
 # ---------------------------------------------------------------------------
+
 
 @router.get("/zones")
 async def list_zones():
@@ -47,21 +50,24 @@ async def list_zones():
     result = []
     for r in rows:
         sm = get_zone_sm(r["id"])
-        result.append({
-            "id":          r["id"],
-            "name":        r["name"],
-            "description": r["description"],
-            "total_laps":  r["total_laps"],
-            "created_at":  r["created_at"],
-            "team_count":  r["team_count"],
-            "state":       sm.state.value,
-        })
+        result.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "description": r["description"],
+                "total_laps": r["total_laps"],
+                "created_at": r["created_at"],
+                "team_count": r["team_count"],
+                "state": sm.state.value,
+            }
+        )
     return result
 
 
 # ---------------------------------------------------------------------------
 # GET /api/zones/{zone_id} — single zone public detail
 # ---------------------------------------------------------------------------
+
 
 @router.get("/zones/{zone_id}")
 async def get_zone(zone_id: str):
@@ -73,21 +79,22 @@ async def get_zone(zone_id: str):
     sm = get_zone_sm(zone_id)
     teams_list = [{"id": t["id"], "name": t["name"]} for t in result["teams"]]
     return {
-        "id":          result["id"],
-        "name":        result["name"],
+        "id": result["id"],
+        "name": result["name"],
         "description": result["description"],
-        "total_laps":  result["total_laps"],
-        "created_at":  result["created_at"],
-        "state":       sm.state.value,
-        "teams":       teams_list,
-        "standings":   result["standings"],
-        "bracket":     compute_bracket(len(teams_list)),
+        "total_laps": result["total_laps"],
+        "created_at": result["created_at"],
+        "state": sm.state.value,
+        "teams": teams_list,
+        "standings": result["standings"],
+        "bracket": compute_bracket(len(teams_list)),
     }
 
 
 # ---------------------------------------------------------------------------
 # GET /api/zones/{zone_id}/status — live phase info for audience
 # ---------------------------------------------------------------------------
+
 
 @router.get("/zones/{zone_id}/status")
 async def get_zone_status(zone_id: str):
@@ -109,6 +116,7 @@ async def get_zone_status(zone_id: str):
 # GET /api/zones/{zone_id}/qualifying-results — placement standings for audience
 # ---------------------------------------------------------------------------
 
+
 @router.get("/zones/{zone_id}/qualifying-results")
 async def get_qualifying_results(zone_id: str):
     with get_db(DB_PATH) as conn:
@@ -124,18 +132,19 @@ async def get_qualifying_results(zone_id: str):
 # POST /api/register — team self-registration
 # ---------------------------------------------------------------------------
 
+
 @router.post("/register")
 async def register_team(body: RegisterRequest):
     import re
+
     import bcrypt as _bcrypt
 
     if not body.zone_id or not body.team_id or not body.team_name or not body.password:
         raise HTTPException(status_code=400, detail="所有字段均为必填")
 
-    if not re.match(r'^[a-zA-Z0-9_]{2,20}$', body.team_id):
+    if not re.match(r"^[a-zA-Z0-9_]{2,20}$", body.team_id):
         raise HTTPException(
-            status_code=400,
-            detail="队伍ID只允许字母/数字/下划线，长度2-20"
+            status_code=400, detail="队伍ID只允许字母/数字/下划线，长度2-20"
         )
 
     password_hash = _bcrypt.hashpw(body.password.encode(), _bcrypt.gensalt()).decode()
@@ -145,7 +154,9 @@ async def register_team(body: RegisterRequest):
             raise HTTPException(status_code=404, detail=f"赛区不存在: {body.zone_id}")
 
         if db_resource_exists(conn, "teams", body.team_id):
-            raise HTTPException(status_code=409, detail=f"队伍ID已被占用: {body.team_id}")
+            raise HTTPException(
+                status_code=409, detail=f"队伍ID已被占用: {body.team_id}"
+            )
 
         create_team(conn, body.team_id, body.team_name, password_hash, body.zone_id)
 
@@ -155,6 +166,7 @@ async def register_team(body: RegisterRequest):
 # ---------------------------------------------------------------------------
 # GET /api/teams — list all teams (optionally filtered by zone)
 # ---------------------------------------------------------------------------
+
 
 @router.get("/teams")
 async def list_teams(zone_id: str = None):

@@ -55,19 +55,6 @@ CREATE TABLE IF NOT EXISTS test_runs (
     world_key         TEXT NOT NULL DEFAULT 'complex'
 );
 
-CREATE TABLE IF NOT EXISTS race_sessions (
-    id          TEXT PRIMARY KEY,
-    type        TEXT NOT NULL,
-    team_ids    TEXT NOT NULL,
-    total_laps  INTEGER NOT NULL,
-    started_at  TEXT,
-    finished_at TEXT,
-    phase       TEXT NOT NULL,
-    result      TEXT,
-    zone_id     TEXT REFERENCES zones(id),
-    name        TEXT
-);
-
 CREATE TABLE IF NOT EXISTS race_points (
     team_id    TEXT NOT NULL,
     session_id TEXT NOT NULL,
@@ -80,7 +67,7 @@ CREATE TABLE IF NOT EXISTS race_points (
 CREATE TABLE IF NOT EXISTS races (
     id              TEXT PRIMARY KEY,
     type            TEXT NOT NULL,
-    zone_id         TEXT NOT NULL REFERENCES zones(id),
+    zone_id         TEXT REFERENCES zones(id),
     initiator       TEXT,
     participant_ids TEXT NOT NULL,
     status          TEXT NOT NULL,
@@ -96,16 +83,34 @@ CREATE TABLE IF NOT EXISTS races (
 """
 
 _MIGRATIONS = [
-    # Idempotent ALTER TABLE statements for existing databases
+    # ── Legacy column additions (existing databases) ──
     "ALTER TABLE teams       ADD COLUMN zone_id        TEXT REFERENCES zones(id)",
     "ALTER TABLE submissions ADD COLUMN slot_name       TEXT NOT NULL DEFAULT 'main'",
     "ALTER TABLE submissions ADD COLUMN is_race_active  INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE race_sessions ADD COLUMN zone_id       TEXT REFERENCES zones(id)",
     "ALTER TABLE zones       ADD COLUMN state           TEXT NOT NULL DEFAULT 'REGISTRATION'",
     "ALTER TABLE race_points ADD COLUMN best_lap_time REAL",
     "ALTER TABLE test_runs   ADD COLUMN world_key        TEXT NOT NULL DEFAULT 'complex'",
     "ALTER TABLE races      ADD COLUMN name             TEXT",
-    "ALTER TABLE race_sessions ADD COLUMN name          TEXT",
+    # ── Unified races table migration ──
+    # 如果 race_sessions 表还存在（旧数据库），迁移数据后删除
+    """INSERT INTO races (id, type, zone_id, initiator, participant_ids, status, world_key, total_laps, created_at, started_at, finished_at, finish_reason, result, name)
+       SELECT rs.id, rs.type, rs.zone_id, NULL,
+              rs.team_ids,
+              CASE rs.phase
+                  WHEN 'waiting' THEN 'waiting'
+                  WHEN 'running' THEN 'running'
+                  WHEN 'recording_ready' THEN 'done'
+                  WHEN 'finished' THEN 'done'
+                  WHEN 'aborted' THEN 'cancelled'
+                  ELSE rs.phase
+              END,
+              'complex', rs.total_laps,
+              COALESCE(rs.started_at, rs.finished_at, rs.id),
+              rs.started_at, rs.finished_at,
+              NULL, rs.result, rs.name
+       FROM race_sessions rs
+       WHERE NOT EXISTS (SELECT 1 FROM races r WHERE r.id = rs.id)""",
+    "DROP TABLE IF EXISTS race_sessions",
 ]
 
 
