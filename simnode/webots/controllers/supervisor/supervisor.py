@@ -471,6 +471,9 @@ try:
                            and c['node'] is not None
                            and c['status'] not in ('disqualified', 'finished')]
             if active_cars:
+                # Guard: reset index if the active list shrank (e.g. a car finished)
+                if _cam_active_index >= len(active_cars):
+                    _cam_active_index = 0
                 # Switch to next active car every _cam_switch_interval seconds
                 if sim_time - _cam_last_switch_time >= _cam_switch_interval:
                     _cam_active_index = (_cam_active_index + 1) % len(active_cars)
