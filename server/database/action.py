@@ -171,13 +171,13 @@ def db_get_zone_detailed(conn, zone_id: str) -> Optional[Dict]:
     ).fetchall()
 
     standings = conn.execute(
-        """SELECT rp.team_id, t.name, SUM(rp.points) AS total_points
+        """SELECT rp.team_id, t.name, SUM(rp.points) AS points
            FROM race_points rp
            JOIN teams t ON rp.team_id = t.id
            JOIN race_sessions rs ON rp.session_id = rs.id
            WHERE rs.zone_id = ?
            GROUP BY rp.team_id
-           ORDER BY total_points DESC""",
+           ORDER BY points DESC""",
         (zone_id,),
     ).fetchall()
 
@@ -196,7 +196,7 @@ def db_get_teams_by_zone(
     """获取赛区所有队伍，可选包含统计数据。"""
     if not include_stats:
         rows = conn.execute(
-            "SELECT id, name, created_at FROM teams WHERE zone_id = ? ORDER BY created_at",
+            "SELECT id, name, zone_id, created_at FROM teams WHERE zone_id = ? ORDER BY created_at",
             (zone_id,),
         ).fetchall()
     else:
@@ -260,23 +260,24 @@ def db_upsert_session(
     team_ids: List[str],
     total_laps: int,
     zone_id: str,
+    name: Optional[str] = None,
 ):
     conn.execute(
         """INSERT INTO race_sessions
-               (id, type, team_ids, total_laps, started_at, finished_at, phase, result, zone_id)
-               VALUES (?, ?, ?, ?, NULL, NULL, 'waiting', NULL, ?)
+               (id, type, team_ids, total_laps, started_at, finished_at, phase, result, zone_id, name)
+               VALUES (?, ?, ?, ?, NULL, NULL, 'waiting', NULL, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                  type=excluded.type, team_ids=excluded.team_ids,
                  total_laps=excluded.total_laps, phase='waiting',
                  started_at=NULL, finished_at=NULL, result=NULL,
-                 zone_id=excluded.zone_id""",
-        (session_id, session_type, json.dumps(team_ids), total_laps, zone_id),
+                 zone_id=excluded.zone_id, name=excluded.name""",
+        (session_id, session_type, json.dumps(team_ids), total_laps, zone_id, name),
     )
 
 
 def db_get_waiting_session(conn, zone_id: str) -> Optional[Dict]:
     row = conn.execute(
-        """SELECT id, type, total_laps, team_ids FROM race_sessions
+        """SELECT id, type, total_laps, team_ids, name FROM race_sessions
            WHERE phase='waiting' AND zone_id=?
            ORDER BY rowid ASC LIMIT 1""",
         (zone_id,),
@@ -705,3 +706,75 @@ def db_get_stage_session_results(conn, zone_id: str, stage: str) -> list[dict]:
             )
         results.append({"session_id": sid, "rankings": rankings})
     return results
+
+
+# ---------------------------------------------------------------------------
+# Races — unified race table (test events + official races)
+# ---------------------------------------------------------------------------
+
+
+def create_race(
+    conn,
+    race_id: str,
+    race_type: str,
+    zone_id: str,
+    initiator: Optional[str],
+    participant_ids: List[str],
+    world_key: str = "complex",
+    total_laps: int = 3,
+    name: Optional[str] = None,
+    created_at: Optional[str] = None,
+) -> None:
+    """创建一条 race 记录。"""
+    if created_at is None:
+        created_at = datetime.datetime.now(datetime.UTC).isoformat()
+    conn.execute(
+        """INSERT INTO races
+           (id, type, zone_id, initiator, participant_ids, status,
+            world_key, total_laps, created_at, name)
+           VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?, ?, ?)""",
+        (
+            race_id,
+            race_type,
+            zone_id,
+            initiator,
+            json.dumps(participant_ids),
+            world_key,
+            total_laps,
+            created_at,
+            name,
+        ),
+    )
+
+
+def update_race(conn, race_id: str, **kwargs) -> None:
+    allowed = {
+        "status",
+        "started_at",
+        "finished_at",
+        "finish_reason",
+        "result",
+    }
+    fields = {k: v for k, v in kwargs.items() if k in allowed}
+    if not fields:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [race_id]
+    conn.execute(f"UPDATE races SET {set_clause} WHERE id = ?", values)
+
+
+def get_race(conn, race_id: str) -> Optional[Dict]:
+    row = conn.execute("SELECT * FROM races WHERE id = ?", (race_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_races_by_participant(conn, team_id: str, limit: int = 20) -> List[Dict]:
+    """查找某队伍参与的所有 race（发起或被邀请）。"""
+    rows = conn.execute(
+        """SELECT * FROM races
+           WHERE participant_ids LIKE ?
+           ORDER BY created_at DESC
+           LIMIT ?""",
+        (f"%{team_id}%", limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
